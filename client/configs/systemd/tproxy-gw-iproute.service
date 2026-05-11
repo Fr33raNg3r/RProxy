@@ -1,0 +1,17 @@
+[Unit]
+Description=TProxy IP Rule & Route Setup
+After=nftables.service network.target
+Requires=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 添加 fwmark 路由表
+ExecStart=/usr/sbin/ip rule add fwmark 1 table 100
+ExecStart=/usr/sbin/ip route add local 0.0.0.0/0 dev lo table 100
+# 停止时清理
+ExecStop=/usr/sbin/ip rule del fwmark 1 table 100
+ExecStop=/usr/sbin/ip route flush table 100
+
+[Install]
+WantedBy=multi-user.target

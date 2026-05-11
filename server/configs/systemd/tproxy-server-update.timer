@@ -1,0 +1,11 @@
+[Unit]
+Description=TProxy Server Daily Update Timer (04:05)
+
+[Timer]
+OnCalendar=*-*-* 04:05:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=tproxy-server-update.service
+
+[Install]
+WantedBy=timers.target

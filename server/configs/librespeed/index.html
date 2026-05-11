@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Speed Test</title>
+<style>
+* { box-sizing: border-box; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+html, body { margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(135deg, #1a2332 0%, #0f1924 100%);
+    color: #e8eef5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.container {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 40px;
+    max-width: 720px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+h1 {
+    margin: 0 0 8px;
+    font-size: 32px;
+    font-weight: 700;
+    background: linear-gradient(90deg, #4dd0e1, #66bb6a);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.subtitle {
+    color: #8aa3bd;
+    margin-bottom: 30px;
+    font-size: 14px;
+}
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.metric {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    padding: 24px 16px;
+}
+.metric-label {
+    font-size: 12px;
+    color: #8aa3bd;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+}
+.metric-value {
+    font-size: 36px;
+    font-weight: 700;
+    color: #4dd0e1;
+    font-variant-numeric: tabular-nums;
+}
+.metric-unit {
+    font-size: 14px;
+    color: #8aa3bd;
+    margin-left: 4px;
+}
+.metric.download .metric-value { color: #66bb6a; }
+.metric.upload   .metric-value { color: #ffa726; }
+.metric.ping     .metric-value { color: #4dd0e1; }
+.metric.jitter   .metric-value { color: #ab47bc; }
+button {
+    background: linear-gradient(135deg, #4dd0e1, #26c6da);
+    border: none;
+    color: #001f24;
+    padding: 14px 48px;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 4px 16px rgba(77,208,225,0.3);
+}
+button:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(77,208,225,0.45); }
+button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+.status {
+    color: #8aa3bd;
+    margin-top: 16px;
+    font-size: 13px;
+    min-height: 18px;
+}
+.footer {
+    color: #6a7b8c;
+    font-size: 12px;
+    margin-top: 30px;
+}
+@media (max-width: 480px) {
+    .container { padding: 24px 16px; }
+    h1 { font-size: 24px; }
+    .metric-value { font-size: 28px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>⚡ Speed Test</h1>
+    <p class="subtitle">Test your internet connection speed</p>
+
+    <div class="metrics">
+        <div class="metric ping">
+            <div class="metric-label">Ping</div>
+            <div><span class="metric-value" id="m-ping">-</span><span class="metric-unit">ms</span></div>
+        </div>
+        <div class="metric jitter">
+            <div class="metric-label">Jitter</div>
+            <div><span class="metric-value" id="m-jitter">-</span><span class="metric-unit">ms</span></div>
+        </div>
+        <div class="metric download">
+            <div class="metric-label">Download</div>
+            <div><span class="metric-value" id="m-down">-</span><span class="metric-unit">Mbps</span></div>
+        </div>
+        <div class="metric upload">
+            <div class="metric-label">Upload</div>
+            <div><span class="metric-value" id="m-up">-</span><span class="metric-unit">Mbps</span></div>
+        </div>
+    </div>
+
+    <button id="start-btn" onclick="startTest()">Start Test</button>
+    <p class="status" id="status">Click "Start Test" to begin</p>
+
+    <p class="footer">Powered by HTML5 Speed Test</p>
+</div>
+
+<script>
+'use strict';
+
+const garbageURL = 'garbage.php';
+const emptyURL   = 'empty.php';
+const uploadURL  = 'empty.php';
+
+const $ = id => document.getElementById(id);
+const setMetric = (id, val) => $(id).textContent = val;
+const setStatus = msg => $('status').textContent = msg;
+
+let testing = false;
+
+async function pingTest(count = 10) {
+    const times = [];
+    for (let i = 0; i < count; i++) {
+        const t0 = performance.now();
+        try {
+            await fetch(emptyURL + '?nc=' + Math.random(), { cache: 'no-store' });
+        } catch (e) {}
+        times.push(performance.now() - t0);
+    }
+    times.sort((a, b) => a - b);
+    const trimmed = times.slice(1, -1); // 去掉最高最低
+    const avg = trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+    const jitter = Math.sqrt(trimmed.reduce((s, t) => s + Math.pow(t - avg, 2), 0) / trimmed.length);
+    return { ping: avg, jitter };
+}
+
+async function downloadTest(durationMs = 10000) {
+    const startTime = performance.now();
+    let totalBytes = 0;
+    const concurrent = 4;
+
+    const tasks = [];
+    for (let i = 0; i < concurrent; i++) {
+        tasks.push((async () => {
+            while (performance.now() - startTime < durationMs) {
+                try {
+                    const resp = await fetch(garbageURL + '?ckSize=20&nc=' + Math.random(), {
+                        cache: 'no-store'
+                    });
+                    if (!resp.body) {
+                        const buf = await resp.arrayBuffer();
+                        totalBytes += buf.byteLength;
+                        continue;
+                    }
+                    const reader = resp.body.getReader();
+                    while (performance.now() - startTime < durationMs) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        totalBytes += value.length;
+                    }
+                    reader.cancel().catch(() => {});
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
+        })());
+    }
+    await Promise.all(tasks);
+
+    const elapsed = (performance.now() - startTime) / 1000;
+    return (totalBytes * 8) / (elapsed * 1_000_000); // Mbps
+}
+
+async function uploadTest(durationMs = 10000) {
+    const startTime = performance.now();
+    let totalBytes = 0;
+    const chunkSize = 1024 * 1024 * 2; // 2MB
+    const blob = new Blob([new Uint8Array(chunkSize)]);
+    const concurrent = 4;
+
+    const tasks = [];
+    for (let i = 0; i < concurrent; i++) {
+        tasks.push((async () => {
+            while (performance.now() - startTime < durationMs) {
+                try {
+                    await fetch(uploadURL + '?nc=' + Math.random(), {
+                        method: 'POST',
+                        body: blob,
+                        cache: 'no-store'
+                    });
+                    totalBytes += blob.size;
+                } catch (e) {
+                    await new Promise(r => setTimeout(r, 100));
+                }
+            }
+        })());
+    }
+    await Promise.all(tasks);
+
+    const elapsed = (performance.now() - startTime) / 1000;
+    return (totalBytes * 8) / (elapsed * 1_000_000);
+}
+
+async function startTest() {
+    if (testing) return;
+    testing = true;
+    $('start-btn').disabled = true;
+
+    setMetric('m-ping', '-');
+    setMetric('m-jitter', '-');
+    setMetric('m-down', '-');
+    setMetric('m-up', '-');
+
+    try {
+        setStatus('Testing latency...');
+        const { ping, jitter } = await pingTest(10);
+        setMetric('m-ping', ping.toFixed(1));
+        setMetric('m-jitter', jitter.toFixed(1));
+
+        setStatus('Testing download speed...');
+        const down = await downloadTest(10000);
+        setMetric('m-down', down.toFixed(2));
+
+        setStatus('Testing upload speed...');
+        const up = await uploadTest(10000);
+        setMetric('m-up', up.toFixed(2));
+
+        setStatus('Test complete.');
+    } catch (e) {
+        setStatus('Error: ' + e.message);
+    }
+    testing = false;
+    $('start-btn').disabled = false;
+}
+</script>
+</body>
+</html>

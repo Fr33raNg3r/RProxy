@@ -1,0 +1,22 @@
+[Unit]
+Description=TProxy WebUI Management Panel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/tproxy-gw/bin/webui serve
+WorkingDirectory=/opt/tproxy-gw
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60
+# WebUI 需要执行 systemctl / nft / wg 等命令，故以 root 运行
+User=root
+Group=root
+# 但仍开启基础保护
+NoNewPrivileges=false
+ProtectSystem=false
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

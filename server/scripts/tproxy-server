@@ -1,0 +1,547 @@
+#!/bin/bash
+# ============================================================================
+# tproxy-server: RProxy 服务端命令行管理工具
+# 安装位置：/usr/local/bin/tproxy-server
+# ============================================================================
+
+set -e
+
+source /opt/tproxy-server/scripts/common.sh
+
+require_installed() {
+    is_installed || die "RProxy 服务端 未安装"
+}
+
+# ============================================================================
+# 内部：渲染 Xray 配置
+# ============================================================================
+
+_render_xray() {
+    require_installed
+    local uuid ws_path alter_id security
+    uuid=$(json_get "${SERVER_CFG}" '.uuid')
+    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+    alter_id=$(json_get "${SERVER_CFG}" '.alter_id')
+    security=$(json_get "${SERVER_CFG}" '.security')
+
+    [[ -n "$uuid" && -n "$ws_path" ]] || die "server.json 不完整"
+
+    mkdir -p /usr/local/etc/xray
+    local tmp="${XRAY_CONFIG_FILE}.tmp"
+    cat > "$tmp" <<EOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "vmess-ws",
+      "listen": "127.0.0.1",
+      "port": ${XRAY_LOCAL_PORT},
+      "protocol": "vmess",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}",
+            "alterId": ${alter_id},
+            "email": "default@local"
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "none",
+        "wsSettings": {
+          "path": "${ws_path}"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom" },
+    { "tag": "block",  "protocol": "blackhole" }
+  ],
+  "routing": {
+    "rules": [
+      { "type": "field", "ip": ["geoip:private"], "outboundTag": "block" }
+    ]
+  }
+}
+EOF
+
+    # 验证：用 -format=json 显式指定格式（避免 .tmp 后缀报错）
+    if ! xray run -test -format=json -c "$tmp" >/dev/null 2>&1; then
+        log_error "渲染的 Xray 配置语法错误"
+        xray run -test -format=json -c "$tmp" 2>&1
+        rm -f "$tmp"
+        return 1
+    fi
+    mv "$tmp" "${XRAY_CONFIG_FILE}"
+}
+
+_apply_xray() {
+    _render_xray
+    restart_service xray
+}
+
+# ============================================================================
+# status：查看状态
+# ============================================================================
+
+cmd_status() {
+    require_installed
+    local domain ws_path uuid
+    domain=$(json_get "${SERVER_CFG}" '.domain')
+    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+    uuid=$(json_get "${SERVER_CFG}" '.uuid')
+
+    echo ""
+    echo -e "  ${CYAN}RProxy 服务端 状态${NC}"
+    echo "  ────────────────────────────────────────────────"
+    echo -e "  版本：           $(get_installed_version)"
+    if is_service_active xray; then
+        echo -e "  Xray 状态：      ${GREEN}运行中${NC}"
+    else
+        echo -e "  Xray 状态：      ${RED}未运行${NC}"
+    fi
+    if is_service_active nginx; then
+        echo -e "  Nginx 状态：     ${GREEN}运行中${NC}"
+    else
+        echo -e "  Nginx 状态：     ${RED}未运行${NC}"
+    fi
+    local public_ip
+    public_ip=$(get_public_ip)
+    echo -e "  公网 IP：        ${CYAN}${public_ip:-未知}${NC}"
+    echo -e "  域名：           ${CYAN}${domain}${NC}"
+    echo -e "  监听端口：       ${CYAN}443${NC}"
+    echo -e "  WS 路径：        ${ws_path}"
+    echo -e "  UUID：           ${uuid}"
+    echo ""
+
+    # 证书有效期
+    if [[ -f "${SSL_DIR}/server.crt" ]]; then
+        local cert_expire
+        cert_expire=$(openssl x509 -in "${SSL_DIR}/server.crt" -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+        echo -e "  证书到期：       ${cert_expire}"
+    fi
+
+    if is_service_active tproxy-server-update.timer; then
+        local next_run
+        next_run=$(systemctl list-timers tproxy-server-update.timer --no-pager 2>/dev/null | awk 'NR==2 {print $1, $2}')
+        echo -e "  下次自动更新：   ${next_run:-未知}"
+    fi
+    echo ""
+}
+
+# ============================================================================
+# show：显示客户端配置
+# ============================================================================
+
+cmd_show() {
+    require_installed
+    local domain ws_path uuid alter_id security
+    domain=$(json_get "${SERVER_CFG}" '.domain')
+    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+    uuid=$(json_get "${SERVER_CFG}" '.uuid')
+    alter_id=$(json_get "${SERVER_CFG}" '.alter_id')
+    security=$(json_get "${SERVER_CFG}" '.security')
+
+    echo ""
+    echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${GREEN}客户端配置${NC}"
+    echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "  把以下字段填到 RProxy 客户端 WebUI 的【节点管理】→【+ 添加节点】："
+    echo ""
+    printf "    %-20s %s\n"             "名称（自定义）："    "如：MyVPS"
+    printf "    %-20s ${CYAN}%s${NC}\n" "地址 (address)：" "${domain}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "端口 (port)："    "443"
+    printf "    %-20s ${CYAN}%s${NC}\n" "UUID："           "${uuid}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "AlterID："        "${alter_id}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "加密方式："       "${security}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "传输协议："       "ws (WebSocket)"
+    printf "    %-20s ${CYAN}%s${NC}\n" "WS 路径："        "${ws_path}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "TLS 安全："       "tls"
+    printf "    %-20s ${CYAN}%s${NC}\n" "SNI / Host："     "${domain}"
+    echo ""
+    echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+}
+
+# ============================================================================
+# change-domain：更换域名（重新申请证书）
+# ============================================================================
+
+cmd_change_domain() {
+    require_installed
+    require_root
+    local new_domain="$1"
+    [[ -n "$new_domain" ]] || die "用法: tproxy-server change-domain <新域名>"
+
+    local old_domain
+    old_domain=$(json_get "${SERVER_CFG}" '.domain')
+    log_info "当前域名：${old_domain}    新域名：${new_domain}"
+    log_warn "切换前请确认新域名已经解析到本机 IP"
+
+    local confirm
+    confirm=$(ask "确认切换？(yes/no): " "no")
+    [[ "$confirm" == "yes" ]] || { log_info "已取消"; return; }
+
+    # 申请新证书
+    log_step "申请新证书"
+    if ! "${ACME_HOME}/acme.sh" --issue \
+            -d "${new_domain}" \
+            -w "${WEB_ROOT}" \
+            -k ec-256 \
+            --force; then
+        log_error "新域名证书申请失败，未做任何更改"
+        return 1
+    fi
+    "${ACME_HOME}/acme.sh" --installcert -d "${new_domain}" \
+        --ecc \
+        --key-file       "${SSL_DIR}/server.key" \
+        --fullchain-file "${SSL_DIR}/server.crt" \
+        --reloadcmd      "systemctl reload nginx"
+
+    # 更新配置
+    json_set "${SERVER_CFG}" ".domain = \"${new_domain}\""
+
+    # 重新部署 Nginx
+    DOMAIN="${new_domain}"
+    local ws_path
+    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+    sed -i \
+        -e "s|server_name ${old_domain};|server_name ${new_domain};|g" \
+        "${NGINX_CONF}"
+
+    # 也可能需要重新生成完整 nginx 配置（更稳）
+    deploy_final_nginx_inplace
+
+    log_done "域名已切换到 ${new_domain}"
+    log_warn "请用新的域名更新所有客户端配置！"
+}
+
+# 工具：用源码模板重新渲染 nginx
+deploy_final_nginx_inplace() {
+    local domain ws_path
+    domain=$(json_get "${SERVER_CFG}" '.domain')
+    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+
+    # 用已部署的脚本目录里的模板
+    local tpl="${SCRIPTS_DIR}/nginx-template.conf"
+    if [[ ! -f "$tpl" ]]; then
+        log_warn "找不到 nginx 模板，仅替换 server_name"
+        return
+    fi
+
+    local php_sock
+    php_sock=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -1)
+
+    sed -e "s|{{DOMAIN}}|${domain}|g" \
+        -e "s|{{WS_PATH}}|${ws_path}|g" \
+        -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
+        -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
+        -e "s|{{XRAY_PORT}}|${XRAY_LOCAL_PORT}|g" \
+        -e "s|{{PHP_SOCK}}|${php_sock}|g" \
+        "$tpl" > "${NGINX_CONF}"
+
+    nginx -t && systemctl reload nginx
+}
+
+# ============================================================================
+# regenerate：重新生成 UUID 和 WS 路径
+# ============================================================================
+
+cmd_regenerate() {
+    require_installed
+    require_root
+    log_warn "这将重新生成 UUID 和 WS 路径，所有现有客户端需要更新配置！"
+    local confirm
+    confirm=$(ask "确认继续？(yes/no): " "no")
+    [[ "$confirm" == "yes" ]] || { log_info "已取消"; return; }
+
+    local new_uuid new_ws_path
+    new_uuid=$(xray uuid)
+    new_ws_path="/$(openssl rand -hex 8)"
+
+    json_set "${SERVER_CFG}" \
+        ".uuid = \"${new_uuid}\" | .ws_path = \"${new_ws_path}\""
+
+    # 重新渲染 Xray 和 nginx
+    _render_xray
+    deploy_final_nginx_inplace
+    restart_service xray
+
+    log_done "已重新生成 UUID 和 WS 路径"
+    cmd_show
+}
+
+# ============================================================================
+# fw：防火墙端口管理
+# ============================================================================
+
+cmd_fw() {
+    require_installed
+    case "${1:-list}" in
+        list) cmd_fw_list ;;
+        add)  cmd_fw_add  "$2" "${3:-tcp}" ;;
+        del)  cmd_fw_del  "$2" "${3:-tcp}" ;;
+        *)
+            cat <<EOF
+用法：
+  tproxy-server fw list                 列出当前防火墙规则
+  tproxy-server fw add <port> [tcp|udp] 放行端口（默认 tcp）
+  tproxy-server fw del <port> [tcp|udp] 撤销放行
+EOF
+            ;;
+    esac
+}
+
+cmd_fw_list() {
+    if ! is_service_active nftables; then
+        log_warn "nftables 未启用（你可能选择了不使用本地防火墙，由云厂商安全组管理）"
+        return
+    fi
+    echo ""
+    nft list ruleset
+    echo ""
+}
+
+cmd_fw_add() {
+    local port="$1" proto="${2:-tcp}"
+    [[ "$port" =~ ^[0-9]+$ ]] || die "无效端口"
+    [[ "$proto" == "tcp" || "$proto" == "udp" ]] || die "协议只能是 tcp 或 udp"
+    is_service_active nftables || die "nftables 未启用"
+    nft add rule inet filter input ${proto} dport ${port} accept comment "\"user-added\""
+    nft list ruleset > /etc/nftables.conf.new
+    echo '#!/usr/sbin/nft -f' > /etc/nftables.conf
+    echo 'flush ruleset' >> /etc/nftables.conf
+    cat /etc/nftables.conf.new >> /etc/nftables.conf
+    rm -f /etc/nftables.conf.new
+    log_done "已放行 ${port}/${proto}"
+}
+
+cmd_fw_del() {
+    local port="$1" proto="${2:-tcp}"
+    [[ "$port" =~ ^[0-9]+$ ]] || die "无效端口"
+    is_service_active nftables || die "nftables 未启用"
+    local handle
+    handle=$(nft -a list chain inet filter input 2>/dev/null | \
+        awk -v p="$port" -v pr="$proto" '$0 ~ pr " dport " p " " {print $NF}' | head -1)
+    [[ -n "$handle" ]] || { log_warn "未找到匹配规则"; return; }
+    nft delete rule inet filter input handle "$handle"
+    nft list ruleset > /etc/nftables.conf.new
+    echo '#!/usr/sbin/nft -f' > /etc/nftables.conf
+    echo 'flush ruleset' >> /etc/nftables.conf
+    cat /etc/nftables.conf.new >> /etc/nftables.conf
+    rm -f /etc/nftables.conf.new
+    log_done "已删除规则 ${port}/${proto}"
+}
+
+# ============================================================================
+# logs：查看日志
+# ============================================================================
+
+cmd_logs() {
+    local component="${1:-xray}"
+    local lines="${2:-100}"
+    [[ "$lines" =~ ^[0-9]+$ ]] || lines=100
+
+    local unit
+    case "$component" in
+        xray)   unit="xray" ;;
+        nginx)  unit="nginx" ;;
+        update) unit="tproxy-server-update" ;;
+        *)
+            cat <<EOF
+用法：tproxy-server logs [xray|nginx|update] [行数]
+EOF
+            return
+            ;;
+    esac
+    journalctl -u "$unit" --no-pager -n "$lines"
+}
+
+# ============================================================================
+# upgrade / uninstall
+# ============================================================================
+
+cmd_upgrade() {
+    require_root
+    bash /opt/tproxy-server/install.sh upgrade 2>/dev/null \
+        || bash <(curl -fsSL "${RAW_URL}/install.sh") upgrade
+}
+
+cmd_uninstall() {
+    require_root
+    if [[ -f /opt/tproxy-server/install.sh ]]; then
+        bash /opt/tproxy-server/install.sh uninstall
+    else
+        bash <(curl -fsSL "${RAW_URL}/install.sh") uninstall
+    fi
+}
+
+# ============================================================================
+# help
+# ============================================================================
+
+cmd_help() {
+    cat <<EOF
+
+  ${CYAN}RProxy 服务端 管理工具${NC}
+
+  用法：
+    tproxy-server [命令]
+
+  命令：
+    status                          查看运行状态
+    show                            显示客户端配置（用于客户端导入）
+    change-domain <新域名>          切换域名（重新申请证书）
+    regenerate                      重新生成 UUID 和 WS 路径
+    fw list                         查看防火墙规则
+    fw add <port> [tcp|udp]         放行端口
+    fw del <port> [tcp|udp]         撤销放行
+    logs [xray|nginx|update] [行数] 查看日志，默认 xray 100 行
+    upgrade                         手动升级
+    uninstall                       卸载
+    help                            显示此帮助
+
+  不带参数运行时显示交互菜单。
+
+EOF
+}
+
+# ============================================================================
+# 交互菜单
+# ============================================================================
+
+show_menu() {
+    while true; do
+        clear
+        echo ""
+        echo -e "  ${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "  ${CYAN}║          RProxy 服务端 管理面板                               ║${NC}"
+        echo -e "  ${CYAN}║          VMess + WebSocket + TLS + 真网站                     ║${NC}"
+        echo -e "  ${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+
+        # 远程版本（GitHub）
+        local remote_ver
+        remote_ver=$(get_remote_version)
+        echo -e "    最新版本（GitHub）：${CYAN}${remote_ver}${NC}"
+
+        if is_installed; then
+            local local_ver domain
+            local_ver=$(get_installed_version)
+            domain=$(json_get "${SERVER_CFG}" '.domain')
+            if [[ "$remote_ver" != "获取失败" && "$local_ver" != "$remote_ver" ]]; then
+                echo -e "    当前已安装版本：  ${YELLOW}${local_ver}${NC}  ${YELLOW}（有新版可升级）${NC}"
+            else
+                echo -e "    当前已安装版本：  ${GREEN}${local_ver}${NC}"
+            fi
+            if is_service_active xray && is_service_active nginx; then
+                echo -e "    服务状态：        ${GREEN}✅ 运行中${NC}"
+            else
+                echo -e "    服务状态：        ${RED}❌ 异常${NC}"
+            fi
+            echo -e "    域名：            ${domain}"
+        else
+            echo -e "    ${YELLOW}RProxy 服务端 未安装${NC}"
+        fi
+        echo ""
+        echo "    1) 查看详细状态"
+        echo "    2) 显示客户端配置"
+        echo "    3) 切换域名（重新申请证书）"
+        echo "    4) 重新生成 UUID 和 WS 路径"
+        echo "    5) 防火墙端口管理"
+        echo "    6) 查看 Xray 日志"
+        echo "    7) 查看 Nginx 日志"
+        echo "    8) 升级"
+        echo "    9) 卸载"
+        echo "    0) 退出"
+        echo ""
+        local choice
+        choice=$(ask "    请选择: ")
+        echo ""
+        case "$choice" in
+            1) cmd_status; press_enter ;;
+            2) cmd_show; press_enter ;;
+            3) menu_change_domain ;;
+            4) cmd_regenerate; press_enter ;;
+            5) menu_fw ;;
+            6) cmd_logs xray 50; press_enter ;;
+            7) cmd_logs nginx 50; press_enter ;;
+            8) cmd_upgrade; press_enter ;;
+            9) cmd_uninstall; exit 0 ;;
+            0) exit 0 ;;
+            *) log_error "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+press_enter() {
+    echo ""
+    local _
+    _=$(ask "    按 Enter 继续...")
+}
+
+menu_change_domain() {
+    local current
+    current=$(json_get "${SERVER_CFG}" '.domain')
+    echo "    当前域名：${current}"
+    echo ""
+    local new_domain
+    new_domain=$(ask "    输入新域名（确保已解析到本机 IP，回车取消）: ")
+    [[ -n "$new_domain" ]] && cmd_change_domain "$new_domain"
+    press_enter
+}
+
+menu_fw() {
+    cmd_fw_list
+    echo "    1) 添加放行端口"
+    echo "    2) 删除放行端口"
+    echo "    0) 返回"
+    local c
+    c=$(ask "    请选择: ")
+    case "$c" in
+        1) local p pr
+           p=$(ask "    端口号: ")
+           pr=$(ask "    协议 (tcp/udp，默认 tcp): " "tcp")
+           [[ -n "$p" ]] && cmd_fw_add "$p" "$pr"
+           press_enter ;;
+        2) local p pr
+           p=$(ask "    端口号: ")
+           pr=$(ask "    协议 (tcp/udp，默认 tcp): " "tcp")
+           [[ -n "$p" ]] && cmd_fw_del "$p" "$pr"
+           press_enter ;;
+        *) ;;
+    esac
+}
+
+# ============================================================================
+# 入口
+# ============================================================================
+
+main() {
+    case "${1:-}" in
+        status)         cmd_status ;;
+        show)           cmd_show ;;
+        change-domain)  shift; cmd_change_domain "$@" ;;
+        regenerate)     cmd_regenerate ;;
+        fw)             shift; cmd_fw "$@" ;;
+        logs)           shift; cmd_logs "$@" ;;
+        upgrade)        cmd_upgrade ;;
+        uninstall)      cmd_uninstall ;;
+        help|-h|--help) cmd_help ;;
+        _render-xray)   _render_xray ;;       # 内部使用
+        "")             show_menu ;;
+        *)              log_error "未知命令：$1"; cmd_help; exit 1 ;;
+    esac
+}
+
+main "$@"

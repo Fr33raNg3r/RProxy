@@ -1,0 +1,737 @@
+#!/bin/bash
+# ============================================================================
+# RProxy 客户端 安装/升级/卸载脚本
+# 适用：Debian 13 x86_64
+# 用法：
+#   wget -O- https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/client/install.sh | bash
+#   或下载后：bash install.sh [install|upgrade|uninstall]
+# ============================================================================
+
+set -e
+
+# ---------- 加载公共函数 ----------
+# 如果是通过 wget pipe 执行，需要先下载 common.sh
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)"
+
+if [[ -f "${SELF_DIR}/scripts/common.sh" ]]; then
+    # 本地执行模式
+    source "${SELF_DIR}/scripts/common.sh"
+    LOCAL_MODE=1
+else
+    # 远程执行模式（管道安装）
+    TMP_COMMON=$(mktemp)
+    if ! curl -fsSL "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/client/scripts/common.sh" -o "${TMP_COMMON}"; then
+        echo "[错误] 无法下载 common.sh，请检查网络" >&2
+        exit 1
+    fi
+    source "${TMP_COMMON}"
+    rm -f "${TMP_COMMON}"
+    LOCAL_MODE=0
+fi
+
+# ---------- 主菜单 ----------
+show_menu() {
+    clear
+    cat <<EOF
+${CYAN}╔═══════════════════════════════════════════════════════════════╗
+║              RProxy 客户端（旁路由） 安装/管理脚本                     ║
+║              适用：Debian 13 x86_64 旁路由                     ║
+╚═══════════════════════════════════════════════════════════════╝${NC}
+
+EOF
+
+    # 远程版本（GitHub）—— 同步显示，超时 5 秒
+    local remote_ver
+    remote_ver=$(get_remote_version)
+    if [[ "$remote_ver" == "获取失败" ]]; then
+        echo -e "  最新版本（GitHub）：${YELLOW}获取失败${NC}"
+        echo -e "  ${YELLOW}⚠ 无法访问 GitHub，国内用户请挂代理后再安装：${NC}"
+        echo -e "    ${YELLOW}export https_proxy=http://你的代理:port${NC}"
+        echo -e "    ${YELLOW}export http_proxy=http://你的代理:port${NC}"
+    else
+        echo -e "  最新版本（GitHub）：${CYAN}${remote_ver}${NC}"
+    fi
+
+    if is_installed; then
+        local local_ver
+        local_ver=$(get_installed_version)
+        if [[ "$remote_ver" != "获取失败" && "$local_ver" != "$remote_ver" ]]; then
+            echo -e "  当前已安装版本：  ${YELLOW}${local_ver}${NC}  ${YELLOW}（有新版可升级）${NC}"
+        else
+            echo -e "  当前已安装版本：  ${GREEN}${local_ver}${NC}"
+        fi
+    else
+        echo -e "  当前状态：        ${YELLOW}未安装${NC}"
+    fi
+    echo ""
+    echo "  请选择操作："
+    echo "    1) 全新安装（清理已有配置）"
+    echo "    2) 升级安装（保留配置）"
+    echo "    3) 卸载"
+    echo "    4) 查看状态"
+    echo "    5) 紧急停止透明代理"
+    echo "    0) 退出"
+    echo ""
+    choice=$(ask "  请输入选项 [0-5]: ")
+    case "$choice" in
+        1) action_install_fresh ;;
+        2) action_upgrade ;;
+        3) action_uninstall ;;
+        4) action_status ;;
+        5) action_emergency_stop ;;
+        0) exit 0 ;;
+        *) log_error "无效选项"; sleep 2; show_menu ;;
+    esac
+}
+
+# ============================================================================
+# 准备工作：apt 源、基础包、内核参数等
+# ============================================================================
+
+setup_apt_source() {
+    log_step "替换 apt 源为清华镜像"
+    local sources_file="/etc/apt/sources.list.d/debian.sources"
+    if [[ -f "$sources_file" ]]; then
+        cp "$sources_file" "${sources_file}.tproxy.bak"
+    fi
+    cat > "$sources_file" <<EOF
+Types: deb deb-src
+URIs: https://mirrors.tuna.tsinghua.edu.cn/debian
+Suites: trixie trixie-updates trixie-backports
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb deb-src
+URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security
+Suites: trixie-security
+Components: main contrib non-free non-free-firmware
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+    # 移除旧的 sources.list（避免重复）
+    if [[ -f /etc/apt/sources.list ]]; then
+        mv /etc/apt/sources.list /etc/apt/sources.list.tproxy.bak
+    fi
+    log_done "apt 源已切换"
+}
+
+install_base_packages() {
+    log_step "更新 apt 索引并安装基础软件包"
+    apt-get update -y
+    apt-get install -y --no-install-recommends \
+        wget curl ca-certificates \
+        nftables wireguard-tools qrencode jq \
+        unzip tar xz-utils \
+        cron systemd
+    log_done "基础软件包安装完成"
+}
+
+install_build_toolchain() {
+    log_step "安装编译工具链（Go + Node.js + npm）"
+    apt-get install -y --no-install-recommends golang-go nodejs npm
+    # 配置国内镜像
+    npm config set registry https://registry.npmmirror.com
+    export GOPROXY=https://goproxy.cn,direct
+    export GO111MODULE=on
+    log_done "编译工具链安装完成"
+}
+
+remove_build_toolchain() {
+    log_step "卸载编译工具链以释放磁盘"
+    apt-get remove -y --purge golang-go nodejs npm 2>/dev/null || true
+    apt-get autoremove -y --purge 2>/dev/null || true
+    rm -rf /root/.npm /root/.cache/go-build /root/go 2>/dev/null || true
+    apt-get clean
+    log_done "编译工具链已清理"
+}
+
+disable_ipv6() {
+    log_step "禁用 IPv6"
+    cat > /etc/sysctl.d/99-tproxy-disable-ipv6.conf <<EOF
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+    sysctl --system >/dev/null
+    log_done "IPv6 已禁用"
+}
+
+enable_ip_forward() {
+    log_step "启用 IP 转发"
+    cat > /etc/sysctl.d/99-tproxy-forward.conf <<EOF
+net.ipv4.ip_forward = 1
+net.ipv4.conf.all.rp_filter = 0
+net.ipv4.conf.default.rp_filter = 0
+EOF
+    sysctl --system >/dev/null
+    log_done "IP 转发已启用"
+}
+
+disable_systemd_resolved() {
+    log_step "停用 systemd-resolved（让 mosdns 接管 53 端口）"
+    if systemctl is-enabled systemd-resolved &>/dev/null; then
+        systemctl disable --now systemd-resolved
+    fi
+    # 替换 resolv.conf
+    rm -f /etc/resolv.conf
+    cat > /etc/resolv.conf <<EOF
+# Managed by RProxy - DNS handled by mosdns on 127.0.0.1:53
+nameserver 127.0.0.1
+EOF
+    # 防止被覆盖
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+    log_done "systemd-resolved 已停用，resolv.conf 指向 mosdns"
+}
+
+# ============================================================================
+# 下载、编译、部署
+# ============================================================================
+
+fetch_source() {
+    log_step "拉取 RProxy 客户端源码到 ${BUILD_DIR}"
+    rm -rf "${BUILD_DIR}"
+    if [[ "${LOCAL_MODE}" == "1" && -d "${SELF_DIR}/webui-backend" ]]; then
+        # 本地模式：直接复制
+        log_info "本地模式：从 ${SELF_DIR} 复制源码"
+        cp -a "${SELF_DIR}" "${BUILD_DIR}"
+    else
+        log_info "远程模式：从 GitHub 下载（仅 client 子目录）"
+        mkdir -p "${BUILD_DIR}"
+        # --strip-components=2 去掉 RProxy-main/client/ 两层
+        # 只解压 client/ 目录下的文件，避免下载多余的 server/ 部分
+        if ! curl -fsSL "https://github.com/Fr33raNg3r/RProxy/archive/refs/heads/main.tar.gz" \
+                | tar xz -C "${BUILD_DIR}" --strip-components=2 'RProxy-main/client'; then
+            die "源码下载失败"
+        fi
+    fi
+    log_done "源码已就绪"
+}
+
+install_xray() {
+    log_step "通过官方一键脚本安装 Xray-core"
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    # 确保 Xray 日志目录存在并有正确权限（保险措施）
+    mkdir -p /var/log/xray
+    chown nobody:nogroup /var/log/xray 2>/dev/null || chown nobody /var/log/xray
+    chmod 755 /var/log/xray
+
+    # 关键修复：让 Xray 以 root 运行
+    # 原因：透明代理需要 Xray 用 SO_MARK 给出包打 mark=0xff（防 nftables 环路），
+    #       这个 socket 选项需要 CAP_NET_ADMIN 权限。
+    #       Xray 官方 systemd unit 默认 User=nobody + NoNewPrivileges=true，
+    #       即使有 AmbientCapabilities=CAP_NET_ADMIN，SO_MARK 仍然被内核拒绝。
+    #       让它以 root 运行能彻底解决这个问题。
+    # 安全性：旁路由是内网设备，不暴露公网，root 运行可接受。
+    log_step "让 Xray 以 root 运行（透明代理需要）"
+    mkdir -p /etc/systemd/system/xray.service.d
+    cat > /etc/systemd/system/xray.service.d/override.conf <<'EOF'
+[Service]
+# 清空原 systemd unit 中限制权限提升的设置
+User=
+Group=
+NoNewPrivileges=
+CapabilityBoundingSet=
+AmbientCapabilities=
+# 显式以 root 运行
+User=root
+EOF
+    # 清理可能残留的 access.log（之前 root 跑过留下的，nobody 写不了）
+    rm -f /var/log/xray/access.log /var/log/xray/error.log
+    systemctl daemon-reload
+    log_done "Xray 安装完成：$(xray version | head -n 1)"
+}
+
+install_mosdns() {
+    log_step "下载并安装 mosdns v5"
+    local arch="amd64"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    cd "$tmp_dir"
+    # 获取最新版下载链接
+    local download_url
+    download_url=$(curl -fsSL https://api.github.com/repos/IrineSistiana/mosdns/releases/latest \
+        | jq -r ".assets[] | select(.name | endswith(\"linux-${arch}.zip\")) | .browser_download_url" \
+        | head -n 1)
+    if [[ -z "$download_url" ]]; then
+        die "无法获取 mosdns 下载链接"
+    fi
+    log_info "下载：${download_url}"
+    curl -fL -o mosdns.zip "$download_url"
+    unzip -o mosdns.zip
+    install -m 0755 mosdns "${BIN_DIR}/mosdns"
+    cd /
+    rm -rf "$tmp_dir"
+    log_done "mosdns 已安装：$(${BIN_DIR}/mosdns version 2>&1 | head -n 1)"
+}
+
+build_webui() {
+    log_step "编译 WebUI 后端（Go）"
+    cd "${BUILD_DIR}/webui-backend"
+    # 多镜像 fallback：goproxy.cn 优先，失败时自动尝试 goproxy.io 和官方
+    export GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
+    export GOSUMDB=sum.golang.google.cn  # 使用国内镜像的校验源
+    
+    # go mod tidy 带重试（应对 CDN 抖动 / HTTP/2 协议错误）
+    local retry=0
+    local max_retry=3
+    while [[ $retry -lt $max_retry ]]; do
+        if go mod tidy; then
+            break
+        fi
+        retry=$((retry + 1))
+        if [[ $retry -lt $max_retry ]]; then
+            log_warn "go mod tidy 失败，等待 5 秒后重试（$retry/$max_retry）..."
+            sleep 5
+            # 切换到下一个 GOPROXY，跳过当前可能出问题的镜像
+            case $retry in
+                1) export GOPROXY=https://goproxy.io,https://proxy.golang.org,direct ;;
+                2) export GOPROXY=https://proxy.golang.org,direct ;;
+            esac
+        fi
+    done
+    
+    if [[ $retry -eq $max_retry ]]; then
+        die "go mod tidy 经过 $max_retry 次重试仍失败，请检查网络后重新运行 install.sh"
+    fi
+    
+    go build -trimpath -ldflags='-s -w' -o "${BIN_DIR}/webui" .
+    log_done "Go 后端编译完成"
+
+    log_step "编译 WebUI 前端（Vue）"
+    cd "${BUILD_DIR}/webui-frontend"
+    npm install --no-audit --no-fund
+    npm run build
+    rm -rf "${WWW_DIR}"
+    mkdir -p "${WWW_DIR}"
+    cp -a dist/* "${WWW_DIR}/"
+    log_done "Vue 前端编译并部署完成"
+    cd /
+}
+
+download_geo_data() {
+    log_step "下载 Xray 用的 GeoIP / GeoSite .dat 文件"
+    local geo_dir="${INSTALL_DIR}/data/geo"
+    local rules_url="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download"
+    mkdir -p "$geo_dir"
+
+    # Xray-core 用 .dat 二进制格式做内部分流
+    download_or_die "${rules_url}/geoip.dat"   "${geo_dir}/geoip.dat"   "geoip.dat"
+    download_or_die "${rules_url}/geosite.dat" "${geo_dir}/geosite.dat" "geosite.dat"
+    # 复制到 Xray 默认查找路径
+    mkdir -p /usr/local/share/xray
+    cp -f "${geo_dir}/geoip.dat"   /usr/local/share/xray/
+    cp -f "${geo_dir}/geosite.dat" /usr/local/share/xray/
+    log_done "GeoIP/GeoSite .dat 已下载"
+
+    log_step "下载 mosdns 用的纯文本规则文件"
+    # 直接下载 Loyalsoldier release 分支预解压的 .txt 列表，无需 v2dat 工具
+    download_or_die "${rules_url}/direct-list.txt" "${geo_dir}/geosite-cn.txt" "geosite-cn"
+    download_or_die "${rules_url}/proxy-list.txt"  "${geo_dir}/proxy-list.txt" "proxy-list"
+    download_or_die "${rules_url}/gfw.txt"         "${geo_dir}/gfw.txt"        "gfw.txt"
+    download_or_die \
+        "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt" \
+        "${geo_dir}/geoip-cn.txt" "geoip-cn"
+
+    # 合并 proxy-list + gfw → geosite-no-cn.txt（mosdns 配置里引用的文件名）
+    cat "${geo_dir}/proxy-list.txt" "${geo_dir}/gfw.txt" \
+        | sort -u > "${geo_dir}/geosite-no-cn.txt"
+
+    log_done "mosdns 规则文件已就绪"
+}
+
+deploy_scripts_and_configs() {
+    log_step "部署脚本和配置文件"
+    mkdir -p "${INSTALL_DIR}" "${SCRIPTS_DIR}" "${CONFIG_DIR}" \
+             "${DATA_DIR}" "${LOG_DIR}" "${BACKUP_DIR}" "${BIN_DIR}" \
+             "${CONFIG_DIR}/xray" "${CONFIG_DIR}/mosdns" \
+             "${CONFIG_DIR}/wireguard" "${CONFIG_DIR}/dns"
+
+    # 部署 shell 脚本
+    cp "${BUILD_DIR}/scripts/common.sh" "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/update-daemon.sh" "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/watchdog.sh" "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/emergency-stop.sh" "${SCRIPTS_DIR}/"
+    chmod +x "${SCRIPTS_DIR}"/*.sh
+
+    # 部署 nftables 规则
+    cp "${BUILD_DIR}/configs/nftables-tproxy.nft" /etc/nftables.conf
+
+    # 部署 systemd 服务
+    cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/
+    cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
+    systemctl daemon-reload
+
+    # 部署版本号
+    cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
+
+    log_done "脚本和配置文件已部署"
+}
+
+generate_default_configs() {
+    log_step "生成默认配置文件"
+
+    # ----- WebUI 配置（端口、密码哈希等） -----
+    if [[ ! -f "${CONFIG_DIR}/webui.json" ]]; then
+        local random_pass
+        random_pass=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12)
+        # 用 Go 程序生成 bcrypt 哈希
+        local pass_hash
+        pass_hash=$("${BIN_DIR}/webui" hashpass "${random_pass}")
+        cat > "${CONFIG_DIR}/webui.json" <<EOF
+{
+  "listen_port": ${DEFAULT_WEBUI_PORT},
+  "username": "admin",
+  "password_hash": "${pass_hash}",
+  "session_secret": "$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)",
+  "wg_enabled": false,
+  "wg_listen_port": ${WG_DEFAULT_PORT},
+  "wg_subnet": "${WG_DEFAULT_SUBNET}",
+  "update_hour": 4,
+  "update_minute": 0,
+  "current_node_id": ""
+}
+EOF
+        chmod 600 "${CONFIG_DIR}/webui.json"
+        # 把初始密码记下来给安装脚本最后打印
+        echo "${random_pass}" > "${CONFIG_DIR}/.initial_password"
+        chmod 600 "${CONFIG_DIR}/.initial_password"
+    fi
+
+    # ----- 节点池（空） -----
+    if [[ ! -f "${CONFIG_DIR}/xray/nodes.json" ]]; then
+        cat > "${CONFIG_DIR}/xray/nodes.json" <<'EOF'
+{
+  "nodes": []
+}
+EOF
+    fi
+
+    # ----- mosdns 配置 -----
+    if [[ ! -f "${CONFIG_DIR}/mosdns/config.yaml" ]]; then
+        cp "${BUILD_DIR}/configs/mosdns-config.yaml.tpl" "${CONFIG_DIR}/mosdns/config.yaml"
+    fi
+
+    # ----- DNS 黑白名单（用户可在 WebUI 里加） -----
+    [[ -f "${CONFIG_DIR}/dns/whitelist.txt" ]] || touch "${CONFIG_DIR}/dns/whitelist.txt"
+    [[ -f "${CONFIG_DIR}/dns/blacklist.txt" ]] || touch "${CONFIG_DIR}/dns/blacklist.txt"
+    [[ -f "${CONFIG_DIR}/dns/hosts.txt"     ]] || touch "${CONFIG_DIR}/dns/hosts.txt"
+
+    # ----- WireGuard 配置（私钥首次生成） -----
+    if [[ ! -f "${CONFIG_DIR}/wireguard/server_privatekey" ]]; then
+        umask 077
+        wg genkey > "${CONFIG_DIR}/wireguard/server_privatekey"
+        wg pubkey < "${CONFIG_DIR}/wireguard/server_privatekey" > "${CONFIG_DIR}/wireguard/server_publickey"
+    fi
+    if [[ ! -f "${CONFIG_DIR}/wireguard/peers.json" ]]; then
+        cat > "${CONFIG_DIR}/wireguard/peers.json" <<'EOF'
+{
+  "peers": []
+}
+EOF
+    fi
+
+    # ----- Xray 默认配置（无节点时仅监听 SOCKS，不做 TPROXY 直到选定节点） -----
+    if [[ ! -f "${XRAY_CONFIG_DIR}/config.json" ]]; then
+        # 调用 webui 程序根据 nodes.json + current_node 渲染配置
+        # 此时 nodes 为空，会生成一个仅 SOCKS、无 outbound 代理的配置
+        "${BIN_DIR}/webui" render-xray || {
+            # 兜底：写一个最小安全配置
+            cat > "${XRAY_CONFIG_DIR}/config.json" <<EOF
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "tag": "socks-in",
+      "port": 10808,
+      "protocol": "socks",
+      "settings": { "auth": "noauth", "udp": true },
+      "listen": "127.0.0.1"
+    }
+  ],
+  "outbounds": [
+    { "tag": "direct", "protocol": "freedom" }
+  ]
+}
+EOF
+        }
+    fi
+
+    log_done "默认配置已生成"
+}
+
+generate_wg_config_file() {
+    # 根据 peers.json 生成 /etc/wireguard/wg0.conf
+    "${BIN_DIR}/webui" render-wg || true
+}
+
+# ============================================================================
+# nftables / systemd 启用
+# ============================================================================
+
+enable_nftables() {
+    log_step "启用并加载 nftables 规则"
+    # 加载前先做语法预检，避免规则错误时 systemctl 报含糊错误
+    if ! nft -c -f /etc/nftables.conf; then
+        log_error "nftables 配置语法错误，安装中止"
+        exit 1
+    fi
+    systemctl enable --now nftables.service
+    nft -f /etc/nftables.conf
+    log_done "nftables 规则已加载"
+}
+
+enable_services() {
+    log_step "启用 systemd 服务"
+    systemctl enable --now tproxy-gw-iproute.service
+    systemctl enable --now xray.service || log_warn "Xray 服务启动失败（可能因为没有节点，待添加节点后会自动正常）"
+    systemctl enable --now tproxy-gw-mosdns.service
+    systemctl enable --now tproxy-gw-webui.service
+    systemctl enable --now tproxy-gw-watchdog.timer
+    systemctl enable --now tproxy-gw-update.timer
+    # WG 服务在添加 peer 后由 webui 启用
+    log_done "服务已启用"
+}
+
+# ============================================================================
+# 安装/升级/卸载主流程
+# ============================================================================
+
+action_install_fresh() {
+    require_root
+    check_arch
+    check_debian13
+
+    if is_installed; then
+        echo ""
+        log_warn "检测到已有安装，全新安装会清除所有现有配置！"
+        confirm=$(ask "确认继续？(yes/no): ")
+        [[ "$confirm" == "yes" ]] || { log_info "已取消"; exit 0; }
+        # 先卸载
+        do_uninstall_silent
+    fi
+
+    setup_apt_source
+    install_base_packages
+    disable_ipv6
+    enable_ip_forward
+
+    fetch_source
+    install_xray
+
+    # 创建目录
+    mkdir -p "${INSTALL_DIR}" "${BIN_DIR}"
+
+    install_build_toolchain
+    build_webui
+    install_mosdns
+    download_geo_data
+
+    deploy_scripts_and_configs
+    generate_default_configs
+    generate_wg_config_file
+
+    enable_nftables
+    disable_systemd_resolved      # mosdns 启动前才停掉 systemd-resolved，避免安装中 DNS 中断
+    enable_services
+
+    remove_build_toolchain
+
+    show_completion_info
+}
+
+action_upgrade() {
+    require_root
+    check_arch
+    check_debian13
+
+    if ! is_installed; then
+        log_error "未检测到已有安装，请先全新安装"
+        exit 1
+    fi
+
+    log_info "开始升级，备份当前配置..."
+    local backup_path
+    backup_path=$(make_backup)
+    log_info "备份路径：${backup_path}"
+
+    fetch_source
+
+    # 检查 VERSION 是否有变化
+    local old_ver new_ver
+    old_ver=$(cat "${INSTALL_DIR}/VERSION")
+    new_ver=$(cat "${BUILD_DIR}/VERSION")
+    log_info "本地版本：${old_ver}    最新版本：${new_ver}"
+
+    install_build_toolchain
+    build_webui
+
+    # 升级 mosdns
+    install_mosdns
+
+    download_geo_data
+
+    # 升级 Xray（官方脚本会自己判断版本）
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+
+    # 部署新脚本（保留配置文件）
+    cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
+    chmod +x "${SCRIPTS_DIR}"/*.sh
+    cp "${BUILD_DIR}/configs/nftables-tproxy.nft" /etc/nftables.conf
+    cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/
+    cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
+    systemctl daemon-reload
+
+    cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
+
+    # 重新生成 Xray 和 WG 配置（基于现有 nodes.json / peers.json）
+    "${BIN_DIR}/webui" render-xray || true
+    "${BIN_DIR}/webui" render-wg || true
+
+    nft -f /etc/nftables.conf
+    restart_service xray
+    restart_service tproxy-gw-mosdns
+    restart_service tproxy-gw-webui
+
+    remove_build_toolchain
+    prune_backups 5
+
+    log_done "升级完成（${old_ver} → ${new_ver}）"
+}
+
+action_uninstall() {
+    require_root
+    if ! is_installed; then
+        log_warn "未检测到 RProxy 客户端，无需卸载"
+        exit 0
+    fi
+    echo ""
+    log_warn "卸载会删除所有配置和数据！"
+    confirm=$(ask "确认卸载？(yes/no): ")
+    [[ "$confirm" == "yes" ]] || { log_info "已取消"; exit 0; }
+    do_uninstall_silent
+    log_done "卸载完成"
+}
+
+do_uninstall_silent() {
+    log_step "停止并禁用服务"
+    for svc in tproxy-gw-update.timer tproxy-gw-watchdog.timer \
+               tproxy-gw-update.service tproxy-gw-watchdog.service \
+               tproxy-gw-webui tproxy-gw-mosdns tproxy-gw-iproute \
+               wg-quick@wg0 xray nftables; do
+        systemctl disable --now "$svc" 2>/dev/null || true
+    done
+
+    log_step "清空 nftables 规则"
+    nft flush ruleset 2>/dev/null || true
+
+    log_step "卸载 Xray"
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+
+    log_step "删除文件"
+    rm -rf "${INSTALL_DIR}" "${WWW_DIR}" "${XRAY_CONFIG_DIR}" \
+           /etc/wireguard/wg0.conf \
+           /etc/systemd/system/tproxy-gw-*.service \
+           /etc/systemd/system/tproxy-gw-*.timer \
+           /etc/sysctl.d/99-tproxy-*.conf
+
+    systemctl daemon-reload
+
+    # 恢复 resolv.conf
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    rm -f /etc/resolv.conf
+    if [[ -f /etc/resolv.conf.bak ]]; then
+        mv /etc/resolv.conf.bak /etc/resolv.conf
+    else
+        echo -e "nameserver 223.5.5.5\nnameserver 119.29.29.29" > /etc/resolv.conf
+    fi
+
+    # 重启 systemd-resolved（如果还想用）
+    # systemctl enable --now systemd-resolved 2>/dev/null || true
+}
+
+action_status() {
+    echo ""
+    if is_installed; then
+        echo -e "  RProxy 客户端版本：${GREEN}$(get_installed_version)${NC}"
+    else
+        echo -e "  ${YELLOW}RProxy 客户端 未安装${NC}"
+        return
+    fi
+    echo ""
+    echo "  组件状态："
+    for svc in xray tproxy-gw-mosdns tproxy-gw-webui wg-quick@wg0; do
+        if systemctl is-active --quiet "$svc"; then
+            echo -e "    ${svc}: ${GREEN}运行中${NC}"
+        else
+            echo -e "    ${svc}: ${RED}未运行${NC}"
+        fi
+    done
+    echo ""
+    if [[ -f "${CONFIG_DIR}/webui.json" ]]; then
+        local port
+        port=$(jq -r '.listen_port' "${CONFIG_DIR}/webui.json")
+        local ip
+        ip=$(hostname -I | awk '{print $1}')
+        echo -e "  WebUI 地址：${CYAN}http://${ip}:${port}${NC}"
+    fi
+    echo ""
+}
+
+action_emergency_stop() {
+    require_root
+    if [[ -x "${SCRIPTS_DIR}/emergency-stop.sh" ]]; then
+        "${SCRIPTS_DIR}/emergency-stop.sh"
+    else
+        log_error "找不到 emergency-stop.sh"
+    fi
+}
+
+show_completion_info() {
+    local ip
+    ip=$(hostname -I | awk '{print $1}')
+    local port
+    port=$(jq -r '.listen_port' "${CONFIG_DIR}/webui.json")
+    local pass=""
+    if [[ -f "${CONFIG_DIR}/.initial_password" ]]; then
+        pass=$(cat "${CONFIG_DIR}/.initial_password")
+    fi
+
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                   RProxy 客户端 安装完成！                           ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  WebUI 访问地址：${CYAN}http://${ip}:${port}${NC}"
+    echo -e "  用户名：${CYAN}admin${NC}"
+    if [[ -n "$pass" ]]; then
+        echo -e "  初始密码：${YELLOW}${pass}${NC}"
+        echo -e "  ${RED}请登录后立即修改密码！${NC}"
+    fi
+    echo ""
+    echo -e "  下一步："
+    echo -e "    1) 在 WebUI 的【节点管理】页面添加你的 VPS 节点"
+    echo -e "    2) 选择一个节点作为活动节点"
+    echo -e "    3) 把局域网客户端的网关和 DNS 指向 ${CYAN}${ip}${NC}"
+    echo ""
+    echo -e "  紧急救援：在旁路由 SSH 执行 ${CYAN}${SCRIPTS_DIR}/emergency-stop.sh${NC}"
+    echo -e "  可清空所有透明代理规则恢复直连。"
+    echo ""
+}
+
+# ============================================================================
+# 入口
+# ============================================================================
+
+main() {
+    require_root
+    case "${1:-}" in
+        install)        action_install_fresh ;;
+        upgrade)        action_upgrade ;;
+        uninstall)      action_uninstall ;;
+        status)         action_status ;;
+        emergency-stop) action_emergency_stop ;;
+        "")             show_menu ;;
+        *)              echo "用法: $0 [install|upgrade|uninstall|status|emergency-stop]"; exit 1 ;;
+    esac
+}
+
+main "$@"

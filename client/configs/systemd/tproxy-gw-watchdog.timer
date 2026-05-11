@@ -1,0 +1,11 @@
+[Unit]
+Description=TProxy Health Check Timer (every 60s)
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=tproxy-gw-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,163 @@
+#!/usr/sbin/nft -f
+# ============================================================================
+# TProxy 透明代理 nftables 规则
+# 设计要点：
+#   1. 使用 TPROXY 劫持 TCP/UDP 到 Xray 12345 端口
+#   2. force_proxy_ips：预填 DoH 服务器 IP，强制走代理（防 GeoIP 误判）
+#   3. cn_ips：mosdns 动态填充 + 预填国内 DNS 服务器（bootstrap 优化）
+#   4. 命中 cn_ips 的流量直接 ACCEPT，不经过 Xray
+#   5. 内网保留地址、回环、组播等不劫持
+#   6. 同时处理转发流量（局域网客户端）和本机流量（旁路由自身）
+#   7. WG 入站流量也通过本规则集得到分流
+# ============================================================================
+
+flush ruleset
+
+# ============================================================================
+# 路由策略：让 TPROXY 标记的包能进入本地协议栈处理
+# ============================================================================
+# 注：以下两条由 systemd ExecStartPost 在加载本规则后通过 ip rule/ip route 命令补充
+#   ip rule add fwmark 1 table 100
+#   ip route add local 0.0.0.0/0 dev lo table 100
+
+# ============================================================================
+# IP 集合定义
+# ============================================================================
+table inet tp {
+
+    # ========================================================================
+    # force_proxy_ips：强制走 Xray 的 IP（兜底保险）
+    # 主要是 DoH 服务器 IP——防止 GeoIP 列表加载异常时误判为国内 IP
+    # 这些 IP 必须始终通过 Xray 出境，否则在某些情况下 DNS 查询会被污染
+    # ========================================================================
+    set force_proxy_ips {
+        type ipv4_addr
+        flags interval
+        elements = {
+            1.0.0.1, 1.1.1.1,    # Cloudflare DoH
+            8.8.4.4, 8.8.8.8     # Google DoH
+        }
+    }
+
+    # ========================================================================
+    # cn_ips：国内 IP 集合
+    # 由 mosdns 解析国内域名时通过 nftset 接口动态填入
+    # 预填：常用国内 DNS 服务器（mosdns 第一次启动时不绕路走代理）
+    # ========================================================================
+    set cn_ips {
+        type ipv4_addr
+        flags interval
+        auto-merge
+        elements = {
+            # Bootstrap：常用国内 DNS（mosdns 上游）
+            223.5.5.5/32, 223.6.6.6/32,             # 阿里 DNS
+            119.29.29.29/32, 119.28.28.28/32,       # 腾讯 DNS
+            114.114.114.114/32, 114.114.115.115/32  # 114 DNS
+        }
+    }
+
+    # 局域网保留地址
+    set reserved_ips {
+        type ipv4_addr
+        flags interval
+        elements = {
+            0.0.0.0/8,
+            10.0.0.0/8,
+            100.64.0.0/10,
+            127.0.0.0/8,
+            169.254.0.0/16,
+            172.16.0.0/12,
+            192.0.0.0/24,
+            192.0.2.0/24,
+            192.88.99.0/24,
+            192.168.0.0/16,
+            198.18.0.0/15,
+            198.51.100.0/24,
+            203.0.113.0/24,
+            224.0.0.0/4,
+            240.0.0.0/4
+        }
+    }
+
+    # ========================================================================
+    # PREROUTING: 转发流量（局域网客户端经过旁路由的流量）
+    # ========================================================================
+    chain prerouting {
+        type filter hook prerouting priority mangle; policy accept;
+
+        # 跳过本机产生的回流（已经标记过的）
+        meta mark 0xff return
+
+        # 仅放过真正源于 lo 的本机内部通信（localhost ↔ localhost）
+        # 不能简单地 `iif lo return`——本机出包被 fwmark 路由到 lo 后
+        # 也会从 lo 进入 prerouting，但其源 IP 不是 127.0.0.1
+        # 这些包必须继续走到下面的 TPROXY 规则才能被 Xray 接管
+        iif lo ip saddr 127.0.0.0/8 return
+
+        # 内网/保留地址直接放行
+        ip daddr @reserved_ips return
+
+        # 强制走代理的 IP（DoH 等）—— 优先级高于 cn_ips 检查
+        meta l4proto { tcp, udp } ip daddr @force_proxy_ips tproxy ip to :12345 meta mark set 1 accept
+
+        # 命中 cn_ips → 直接放行（不进 TPROXY）
+        ip daddr @cn_ips return
+
+        # TCP/UDP 全部 TPROXY 到 12345
+        meta l4proto { tcp, udp } tproxy ip to :12345 meta mark set 1 accept
+    }
+
+    # ========================================================================
+    # OUTPUT: 旁路由自身产生的流量（mosdns 的 DoH 请求、watchdog 探测等）
+    # ========================================================================
+    chain output {
+        type route hook output priority mangle; policy accept;
+
+        # 跳过 Xray 自己产生的流量（防止环路）
+        # Xray 在所有 outbound 的 sockopt 里都设置了 mark=255 (0xff)
+        meta mark 0xff return
+
+        # 跳过 WireGuard 内核模块发出的握手/数据响应包
+        # WG 内核模块作为响应方时，包源端口是 51820（监听端口）
+        # 这些包不能被 TPROXY 劫持，必须从物理网卡正常发出去
+        udp sport 51820 return
+
+        # 强制走代理的 IP（DoH 等）—— 必须在 skuid 0 之前
+        # 否则 mosdns（root 跑）的 DoH 请求会跳过 TPROXY，被 GFW 阻断
+        ip daddr @force_proxy_ips meta l4proto { tcp, udp } meta mark set 1 accept
+
+        # 跳过 root 用户（含 Xray、watchdog 等系统进程）的其他流量
+        meta skuid 0 return
+
+        # lo 不处理
+        oif lo return
+
+        # 内网/保留 IP 不处理
+        ip daddr @reserved_ips return
+
+        # 国内 IP 不处理
+        ip daddr @cn_ips return
+
+        # 给本机出站流量打 mark，让它经过 PREROUTING 时重新进入 TPROXY 流程
+        meta l4proto { tcp, udp } meta mark set 1
+    }
+
+    # ========================================================================
+    # DIVERT: 已建立 TPROXY 连接的快速路径
+    # ========================================================================
+    chain divert {
+        type filter hook prerouting priority -150; policy accept;
+        meta l4proto tcp socket transparent 1 meta mark set 1 accept
+    }
+}
+
+# ============================================================================
+# NAT: WG 子网出站需要 SNAT，否则远端无法回包
+# ============================================================================
+table ip tp_nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        # 来自 WG 子网且经物理网卡出去的，做 MASQUERADE
+        ip saddr 172.16.7.0/24 oifname != "wg0" masquerade
+    }
+}
