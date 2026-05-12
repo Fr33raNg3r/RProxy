@@ -38,22 +38,22 @@
       <div class="card-title">基础设置</div>
       <div class="form-group">
         <label>WebUI 监听端口</label>
-        <input v-model.number="settings.listen_port" type="number" class="form-control" />
+        <input v-model.number="settings.listen_port" type="number" class="form-control input-tiny" />
         <div class="text-muted text-xs mt-2">修改后将自动重启 WebUI 服务，需用新端口重新访问</div>
       </div>
       <div class="form-group">
         <label>WireGuard 监听端口</label>
-        <input v-model.number="settings.wg_listen_port" type="number" class="form-control" />
+        <input v-model.number="settings.wg_listen_port" type="number" class="form-control input-tiny" />
         <div class="text-muted text-xs mt-2">修改后将自动重启 WG 服务</div>
       </div>
       <div class="flex gap-3">
         <div class="form-group" style="flex: 1;">
           <label>每日更新时间 — 时</label>
-          <input v-model.number="settings.update_hour" type="number" min="0" max="23" class="form-control" />
+          <input v-model.number="settings.update_hour" type="number" min="0" max="23" class="form-control input-tiny" />
         </div>
         <div class="form-group" style="flex: 1;">
           <label>每日更新时间 — 分</label>
-          <input v-model.number="settings.update_minute" type="number" min="0" max="59" class="form-control" />
+          <input v-model.number="settings.update_minute" type="number" min="0" max="59" class="form-control input-tiny" />
         </div>
       </div>
       <button class="btn btn-primary" @click="saveSettings" :disabled="saving">

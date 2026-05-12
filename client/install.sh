@@ -70,18 +70,37 @@ EOF
     echo "    3) 卸载"
     echo "    4) 查看状态"
     echo "    5) 紧急停止透明代理"
+    echo "    6) 系统优化（内核切换、网络调优）"
     echo "    0) 退出"
     echo ""
-    choice=$(ask "  请输入选项 [0-5]: ")
+    choice=$(ask "  请输入选项 [0-6]: ")
     case "$choice" in
         1) action_install_fresh ;;
         2) action_upgrade ;;
         3) action_uninstall ;;
         4) action_status ;;
         5) action_emergency_stop ;;
+        6) action_system_optimize ;;
         0) exit 0 ;;
         *) log_error "无效选项"; sleep 2; show_menu ;;
     esac
+}
+
+# 加载并执行系统优化菜单
+action_system_optimize() {
+    local opt_script="${INSTALL_DIR}/scripts/system-optimize.sh"
+    # 已安装：用部署的脚本
+    if [[ -f "$opt_script" ]]; then
+        # shellcheck disable=SC1090
+        source "$opt_script"
+    # 未安装：从源码目录用
+    elif [[ -f "${SELF_DIR}/scripts/system-optimize.sh" ]]; then
+        # shellcheck disable=SC1091
+        source "${SELF_DIR}/scripts/system-optimize.sh"
+    else
+        die "找不到 system-optimize.sh，请确认安装完整"
+    fi
+    system_optimize_menu
 }
 
 # ============================================================================
@@ -350,7 +369,10 @@ deploy_scripts_and_configs() {
     cp "${BUILD_DIR}/scripts/update-daemon.sh" "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/watchdog.sh" "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/emergency-stop.sh" "${SCRIPTS_DIR}/"
-    chmod +x "${SCRIPTS_DIR}"/*.sh
+    cp "${BUILD_DIR}/scripts/system-optimize.sh" "${SCRIPTS_DIR}/"
+    # install.sh 本身也部署到 INSTALL_DIR（升级时需要重新运行）
+    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
+    chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
 
     # 部署 nftables 规则
     cp "${BUILD_DIR}/configs/nftables-tproxy.nft" /etc/nftables.conf
@@ -487,6 +509,7 @@ enable_services() {
     systemctl enable --now tproxy-gw-webui.service
     systemctl enable --now tproxy-gw-watchdog.timer
     systemctl enable --now tproxy-gw-update.timer
+    systemctl enable --now tproxy-gw-flush-ipsets.timer
     # WG 服务在添加 peer 后由 webui 启用
     log_done "服务已启用"
 }
@@ -580,6 +603,9 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
     systemctl daemon-reload
 
+    # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）
+    systemctl enable --now tproxy-gw-flush-ipsets.timer 2>/dev/null || true
+
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
 
     # 重新生成 Xray 和 WG 配置（基于现有 nodes.json / peers.json）
@@ -613,8 +639,8 @@ action_uninstall() {
 
 do_uninstall_silent() {
     log_step "停止并禁用服务"
-    for svc in tproxy-gw-update.timer tproxy-gw-watchdog.timer \
-               tproxy-gw-update.service tproxy-gw-watchdog.service \
+    for svc in tproxy-gw-update.timer tproxy-gw-watchdog.timer tproxy-gw-flush-ipsets.timer \
+               tproxy-gw-update.service tproxy-gw-watchdog.service tproxy-gw-flush-ipsets.service \
                tproxy-gw-webui tproxy-gw-mosdns tproxy-gw-iproute \
                wg-quick@wg0 xray nftables; do
         systemctl disable --now "$svc" 2>/dev/null || true

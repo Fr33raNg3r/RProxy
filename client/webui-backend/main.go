@@ -1,4 +1,4 @@
-// TProxy WebUI Backend
+// RProxy WebUI Backend
 // 入口文件，根据命令行参数分发到不同子命令：
 //
 //	webui serve              - 启动 HTTP 服务器（systemd 启动用）
@@ -21,7 +21,7 @@ import (
 const Version = "0.1.0"
 
 func usage() {
-	fmt.Printf(`TProxy WebUI Backend %s
+	fmt.Printf(`RProxy WebUI Backend %s
 
 用法：
   webui serve              启动 HTTP 服务器

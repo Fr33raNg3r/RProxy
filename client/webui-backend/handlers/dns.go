@@ -50,7 +50,13 @@ func UpdateDNSRules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 清空白/黑名单 IP 集合——避免旧 IP 残留干扰
+	// 错误忽略：如果集合不存在（如 nftables 还没加载），不算严重问题
+	_ = exec.Command("nft", "flush", "set", "inet", "tp", "whitelist_ips").Run()
+	_ = exec.Command("nft", "flush", "set", "inet", "tp", "blacklist_ips").Run()
+
 	// 通知 mosdns reload（v5 支持 SIGHUP 重载，或直接重启）
+	// 重启 mosdns 同时也会清掉它内部的 DNS 缓存
 	_ = exec.Command("systemctl", "restart", "tproxy-gw-mosdns").Run()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }

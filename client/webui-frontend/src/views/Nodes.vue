@@ -79,23 +79,23 @@
           </div>
           <div class="form-group" style="flex: 1;">
             <label>端口 *</label>
-            <input v-model.number="form.port" type="number" class="form-control" placeholder="443" />
+            <input v-model.number="form.port" type="number" class="form-control input-tiny" placeholder="443" />
           </div>
         </div>
 
         <div class="form-group">
           <label>UUID *</label>
-          <input v-model="form.uuid" class="form-control" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+          <input v-model="form.uuid" class="form-control input-long" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
         </div>
 
         <div class="flex gap-3">
           <div class="form-group" style="flex: 1;">
             <label>AlterID</label>
-            <input v-model.number="form.alter_id" type="number" class="form-control" placeholder="0" />
+            <input v-model.number="form.alter_id" type="number" class="form-control input-tiny" placeholder="0" />
           </div>
           <div class="form-group" style="flex: 1;">
             <label>加密方式</label>
-            <select v-model="form.security" class="form-control">
+            <select v-model="form.security" class="form-control input-short">
               <option value="auto">auto（推荐）</option>
               <option value="aes-128-gcm">aes-128-gcm</option>
               <option value="chacha20-poly1305">chacha20-poly1305</option>
@@ -107,7 +107,7 @@
 
         <div class="form-group">
           <label>WS 路径 *</label>
-          <input v-model="form.ws_path" class="form-control" placeholder="/a1b2c3d4e5f60789" />
+          <input v-model="form.ws_path" class="form-control input-long" placeholder="/a1b2c3d4e5f60789" />
           <div class="text-muted text-xs">必须以 / 开头</div>
         </div>
 

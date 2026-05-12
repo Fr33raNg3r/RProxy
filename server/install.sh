@@ -73,18 +73,34 @@ EOF
     echo "    2) 升级安装"
     echo "    3) 卸载"
     echo "    4) 查看状态"
+    echo "    5) 系统优化（内核切换、网络调优）"
     echo "    0) 退出"
     echo ""
     local choice
-    choice=$(ask "  请输入选项 [0-4]: ")
+    choice=$(ask "  请输入选项 [0-5]: ")
     case "$choice" in
         1) action_install_fresh ;;
         2) action_upgrade ;;
         3) action_uninstall ;;
         4) action_status ;;
+        5) action_system_optimize ;;
         0) exit 0 ;;
         *) log_error "无效选项"; sleep 2; show_menu ;;
     esac
+}
+
+action_system_optimize() {
+    local opt_script="${INSTALL_DIR}/scripts/system-optimize.sh"
+    if [[ -f "$opt_script" ]]; then
+        # shellcheck disable=SC1090
+        source "$opt_script"
+    elif [[ -f "${SELF_DIR}/scripts/system-optimize.sh" ]]; then
+        # shellcheck disable=SC1091
+        source "${SELF_DIR}/scripts/system-optimize.sh"
+    else
+        die "找不到 system-optimize.sh"
+    fi
+    system_optimize_menu
 }
 
 # ============================================================================
@@ -328,9 +344,12 @@ deploy_files() {
     log_step "部署脚本和配置文件"
     mkdir -p "${INSTALL_DIR}" "${SCRIPTS_DIR}" "${CONFIG_DIR}" "${DATA_DIR}" "${LOG_DIR}"
 
-    cp "${BUILD_DIR}/scripts/common.sh"        "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/update-daemon.sh" "${SCRIPTS_DIR}/"
-    chmod +x "${SCRIPTS_DIR}"/*.sh
+    cp "${BUILD_DIR}/scripts/common.sh"            "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/update-daemon.sh"     "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/system-optimize.sh"   "${SCRIPTS_DIR}/"
+    # install.sh 本身也部署
+    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
+    chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
 
     cp "${BUILD_DIR}/scripts/tproxy-server" /usr/local/bin/tproxy-server
     chmod +x /usr/local/bin/tproxy-server

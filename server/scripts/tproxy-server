@@ -408,6 +408,7 @@ cmd_help() {
     fw del <port> [tcp|udp]         撤销放行
     logs [xray|nginx|update] [行数] 查看日志，默认 xray 100 行
     upgrade                         手动升级
+    optimize                        系统优化（内核切换、网络调优）
     uninstall                       卸载
     help                            显示此帮助
 
@@ -462,7 +463,8 @@ show_menu() {
         echo "    6) 查看 Xray 日志"
         echo "    7) 查看 Nginx 日志"
         echo "    8) 升级"
-        echo "    9) 卸载"
+        echo "    9) 系统优化（内核、网络调优）"
+        echo "   10) 卸载"
         echo "    0) 退出"
         echo ""
         local choice
@@ -477,7 +479,8 @@ show_menu() {
             6) cmd_logs xray 50; press_enter ;;
             7) cmd_logs nginx 50; press_enter ;;
             8) cmd_upgrade; press_enter ;;
-            9) cmd_uninstall; exit 0 ;;
+            9) cmd_optimize ;;
+            10) cmd_uninstall; exit 0 ;;
             0) exit 0 ;;
             *) log_error "无效选项"; sleep 1 ;;
         esac
@@ -523,6 +526,16 @@ menu_fw() {
     esac
 }
 
+cmd_optimize() {
+    local opt_script="${INSTALL_DIR}/scripts/system-optimize.sh"
+    if [[ ! -f "$opt_script" ]]; then
+        die "找不到 ${opt_script}"
+    fi
+    # shellcheck disable=SC1090
+    source "$opt_script"
+    system_optimize_menu
+}
+
 # ============================================================================
 # 入口
 # ============================================================================
@@ -536,6 +549,7 @@ main() {
         fw)             shift; cmd_fw "$@" ;;
         logs)           shift; cmd_logs "$@" ;;
         upgrade)        cmd_upgrade ;;
+        optimize)       cmd_optimize ;;
         uninstall)      cmd_uninstall ;;
         help|-h|--help) cmd_help ;;
         _render-xray)   _render_xray ;;       # 内部使用

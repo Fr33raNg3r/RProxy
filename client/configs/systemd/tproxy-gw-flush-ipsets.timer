@@ -1,0 +1,11 @@
+[Unit]
+Description=RProxy Daily Flush IP Sets Timer (03:00 daily)
+
+[Timer]
+# 每天凌晨 3 点触发清空
+OnCalendar=*-*-* 03:00:00
+# 如果旁路由 3 点正好关机，开机后补跑
+Persistent=true
+
+[Install]
+WantedBy=timers.target

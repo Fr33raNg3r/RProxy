@@ -20,15 +20,24 @@ plugins:
       size: 8192
       lazy_cache_ttl: 86400
 
-  # ----------- 国内 DNS 上游 -----------
+  # ----------- 国内 DNS 上游（运营商 DNS）-----------
+  # 仅使用电信和移动的真实运营商 DNS，无公共 DNS。
+  # 国内流量不考虑 DNS 劫持问题。
+  # concurrent: 4 表示 4 个上游同时查询，谁先返回用谁的结果。
   - tag: forward_local
     type: forward
     args:
-      concurrent: 2
+      concurrent: 4
       upstreams:
-        - addr: "udp://223.5.5.5"
+        # 中国电信
+        - addr: "udp://61.128.128.68"
           enable_pipeline: true
-        - addr: "udp://119.29.29.29"
+        - addr: "udp://61.128.192.68"
+          enable_pipeline: true
+        # 中国移动
+        - addr: "udp://218.201.4.3"
+          enable_pipeline: true
+        - addr: "udp://218.201.21.132"
           enable_pipeline: true
 
   # ----------- 国外 DoH 上游（流量将被 nftables 劫持到 Xray 出境）-----------
@@ -86,7 +95,7 @@ plugins:
   # 子序列：必须定义在 main_sequence 之前（mosdns v5 不支持向前引用）
   # ============================================================================
 
-  # ----------- 子序列：把响应中的国内 IP 加入 cn_ips set -----------
+  # ----------- 子序列：把响应中的 IP 加入 cn_ips set -----------
   # mosdns v5 的 nftset 不是独立插件，是 sequence 内置 action
   # 参数格式：nftset 表族,表名,集合名,IP类型,掩码
   - tag: add_to_cn_set
@@ -95,6 +104,22 @@ plugins:
       - matches:
           - resp_ip $geoip_cn
         exec: nftset inet,tp,cn_ips,ipv4_addr,32
+      - exec: accept
+
+  # ----------- 子序列：把响应中的所有 IP 加入 whitelist_ips set（白名单强制直连）-----------
+  # 与 cn_set 不同：不需要匹配 geoip_cn，所有解析到的 IP 都加入
+  # 因为用户希望"这个域名永远直连"，与 IP 在哪个地区无关
+  - tag: add_to_whitelist_set
+    type: sequence
+    args:
+      - exec: nftset inet,tp,whitelist_ips,ipv4_addr,32
+      - exec: accept
+
+  # ----------- 子序列：把响应中的所有 IP 加入 blacklist_ips set（黑名单强制代理）-----------
+  - tag: add_to_blacklist_set
+    type: sequence
+    args:
+      - exec: nftset inet,tp,blacklist_ips,ipv4_addr,32
       - exec: accept
 
   # ----------- 兜底：未识别域名走"本地优先 + 远程兜底"策略 -----------
@@ -122,23 +147,25 @@ plugins:
       # 2) 缓存命中 → 直接返回
       - exec: $cache
 
-      # 3) 用户白名单 → 走国内
+      # 3) 用户白名单 → 走国内 DNS → 解析的 IP 写入 whitelist_ips（强制直连）
       - matches:
           - qname $user_whitelist
         exec: $forward_local
 
       - matches:
+          - qname $user_whitelist
           - has_resp
-        exec: jump add_to_cn_set
+        exec: jump add_to_whitelist_set
 
-      # 4) 用户黑名单 → 走国外（DoH）
+      # 4) 用户黑名单 → 走国外 DoH → 解析的 IP 写入 blacklist_ips（强制走代理）
       - matches:
           - qname $user_blacklist
         exec: $forward_remote
 
       - matches:
+          - qname $user_blacklist
           - has_resp
-        exec: return
+        exec: jump add_to_blacklist_set
 
       # 5) geosite_cn → 走国内
       - matches:

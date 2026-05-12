@@ -42,7 +42,7 @@ table inet tp {
     # ========================================================================
     # cn_ips：国内 IP 集合
     # 由 mosdns 解析国内域名时通过 nftset 接口动态填入
-    # 预填：常用国内 DNS 服务器（mosdns 第一次启动时不绕路走代理）
+    # 预填：常用国内 DNS 服务器（mosdns 第一次启动时不绕路走代理)
     # ========================================================================
     set cn_ips {
         type ipv4_addr
@@ -54,6 +54,29 @@ table inet tp {
             119.29.29.29/32, 119.28.28.28/32,       # 腾讯 DNS
             114.114.114.114/32, 114.114.115.115/32  # 114 DNS
         }
+    }
+
+    # ========================================================================
+    # whitelist_ips：用户白名单域名解析出的 IP（强制直连）
+    # 由 mosdns 解析 whitelist.txt 中的域名后通过 nftset 接口动态填入
+    # 系统重启 / nftables 重新加载 / 每天凌晨 3 点定时清空
+    # 用户保存名单时也会被清空（避免旧 IP 残留）
+    # ========================================================================
+    set whitelist_ips {
+        type ipv4_addr
+        flags interval
+        auto-merge
+    }
+
+    # ========================================================================
+    # blacklist_ips：用户黑名单域名解析出的 IP（强制走代理）
+    # 由 mosdns 解析 blacklist.txt 中的域名后通过 nftset 接口动态填入
+    # 同 whitelist_ips 的清空策略
+    # ========================================================================
+    set blacklist_ips {
+        type ipv4_addr
+        flags interval
+        auto-merge
     }
 
     # 局域网保留地址
@@ -97,6 +120,14 @@ table inet tp {
         # 内网/保留地址直接放行
         ip daddr @reserved_ips return
 
+        # ==================== 用户黑白名单（IP 级闭环）====================
+        # 优先级高于 force_proxy_ips 和 cn_ips
+        # 白名单：强制直连（即使 IP 在国外，也不走代理）
+        ip daddr @whitelist_ips return
+        # 黑名单：强制走代理（即使 IP 在国内，也走代理）
+        meta l4proto { tcp, udp } ip daddr @blacklist_ips tproxy ip to :12345 meta mark set 1 accept
+        # ==================================================================
+
         # 强制走代理的 IP（DoH 等）—— 优先级高于 cn_ips 检查
         meta l4proto { tcp, udp } ip daddr @force_proxy_ips tproxy ip to :12345 meta mark set 1 accept
 
@@ -121,6 +152,13 @@ table inet tp {
         # WG 内核模块作为响应方时，包源端口是 51820（监听端口）
         # 这些包不能被 TPROXY 劫持，必须从物理网卡正常发出去
         udp sport 51820 return
+
+        # ==================== 用户黑白名单（IP 级闭环）====================
+        # 白名单：强制直连
+        ip daddr @whitelist_ips return
+        # 黑名单：强制走代理（必须在 skuid 0 之前，否则 root 进程会绕过）
+        ip daddr @blacklist_ips meta l4proto { tcp, udp } meta mark set 1 accept
+        # ==================================================================
 
         # 强制走代理的 IP（DoH 等）—— 必须在 skuid 0 之前
         # 否则 mosdns（root 跑）的 DoH 请求会跳过 TPROXY，被 GFW 阻断

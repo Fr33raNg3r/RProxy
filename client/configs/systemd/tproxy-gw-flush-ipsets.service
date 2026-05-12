@@ -1,0 +1,15 @@
+[Unit]
+Description=RProxy Daily Flush Whitelist/Blacklist IP Sets
+After=nftables.service
+Requires=nftables.service
+
+[Service]
+Type=oneshot
+# 1) 清空两个 IP 集合（如果集合不存在，nft 返回非 0，但用 || true 忽略）
+# 2) 重启 mosdns 让它清空 DNS 缓存（这样下次域名访问时会重新 DNS 解析并填入集合）
+ExecStart=/usr/sbin/nft flush set inet tp whitelist_ips
+ExecStart=/usr/sbin/nft flush set inet tp blacklist_ips
+ExecStart=/bin/systemctl restart tproxy-gw-mosdns
+
+# 即使某条命令失败也继续（防止集合不存在时阻塞 timer）
+SuccessExitStatus=0 1

@@ -66,6 +66,10 @@ export const api = {
   setEndpoint(endpoint) {
     return request('/api/wireguard/endpoint', { method: 'POST', body: { endpoint } })
   },
+
+  // 版本检查与升级
+  getVersion() { return request('/api/version') },
+  triggerUpgrade() { return request('/api/upgrade', { method: 'POST' }) },
   peerQRCodeURL(id, endpoint) {
     const q = endpoint ? '?endpoint=' + encodeURIComponent(endpoint) : ''
     return '/api/wireguard/peers/' + id + '/qrcode' + q

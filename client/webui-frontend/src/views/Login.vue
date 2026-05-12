@@ -1,7 +1,7 @@
 <template>
   <div class="login-page">
     <div class="login-box">
-      <h2>TProxy</h2>
+      <h2>RProxy</h2>
       <div v-if="error" class="alert alert-error">{{ error }}</div>
       <div class="form-group">
         <label>用户名</label>

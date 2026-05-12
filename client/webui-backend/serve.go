@@ -21,6 +21,9 @@ func runServe() {
 		log.Fatalf("无法加载 webui.json: %v", err)
 	}
 
+	// 启动版本检查（本地立即读，远程异步拉取）
+	handlers.InitVersionCheck()
+
 	r := chi.NewRouter()
 
 	// 简单的请求日志
@@ -70,6 +73,10 @@ func runServe() {
 
 		// 日志
 		r.Get("/api/logs/{component}", handlers.GetLogs)
+
+		// 版本与升级
+		r.Get("/api/version", handlers.GetVersion)
+		r.Post("/api/upgrade", handlers.TriggerUpgrade)
 	})
 
 	// ---------- 静态文件（Vue 构建产物） ----------

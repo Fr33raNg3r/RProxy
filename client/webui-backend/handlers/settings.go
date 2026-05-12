@@ -118,7 +118,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 func updateTimerSchedule(hour, minute int) error {
 	timerFile := "/etc/systemd/system/tproxy-gw-update.timer"
 	content := fmt.Sprintf(`[Unit]
-Description=TProxy Daily Update Timer (%02d:%02d daily)
+Description=RProxy Daily Update Timer (%02d:%02d daily)
 
 [Timer]
 OnCalendar=*-*-* %02d:%02d:00
