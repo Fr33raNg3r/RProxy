@@ -68,14 +68,15 @@ install_zabbly_kernel() {
     local codename
     codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
 
-    cat > /etc/apt/sources.list.d/zabbly-kernel-stable.sources <<EOF
+    cat <<EOF > /etc/apt/sources.list.d/zabbly-kernel-stable.sources
 Enabled: yes
 Types: deb
 URIs: https://pkgs.zabbly.com/kernel/stable
-Suites: ${codename}
+Suites: $(. /etc/os-release && echo ${VERSION_CODENAME})
 Components: main
-Architectures: amd64
+Architectures: $(dpkg --print-architecture)
 Signed-By: /etc/apt/keyrings/zabbly.asc
+
 EOF
 
     log_step "刷新软件包列表"
