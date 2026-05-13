@@ -147,6 +147,7 @@ table inet tp {
         # 跳过 Xray 自己产生的流量（防止环路）
         # Xray 在所有 outbound 的 sockopt 里都设置了 mark=255 (0xff)
         meta mark 0xff return
+        meta skuid 0 return
 
         # 跳过 WireGuard 内核模块发出的握手/数据响应包
         # WG 内核模块作为响应方时，包源端口是 51820（监听端口）
@@ -163,9 +164,7 @@ table inet tp {
         # 强制走代理的 IP（DoH 等）—— 必须在 skuid 0 之前
         # 否则 mosdns（root 跑）的 DoH 请求会跳过 TPROXY，被 GFW 阻断
         ip daddr @force_proxy_ips meta l4proto { tcp, udp } meta mark set 1 accept
-
-        # 跳过 root 用户（含 Xray、watchdog 等系统进程）的其他流量
-        meta skuid 0 return
+        
 
         # lo 不处理
         oif lo return
