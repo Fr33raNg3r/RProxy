@@ -252,22 +252,35 @@ install_xray() {
     #       让它以 root 运行能彻底解决这个问题。
     # 安全性：旁路由是内网设备，不暴露公网，root 运行可接受。
     log_step "让 Xray 以 root 运行（透明代理需要）"
-    mkdir -p /etc/systemd/system/xray.service.d
-    cat > /etc/systemd/system/xray.service.d/override.conf <<'EOF'
-[Service]
-# 清空原 systemd unit 中限制权限提升的设置
-User=
-Group=
-NoNewPrivileges=
-CapabilityBoundingSet=
-AmbientCapabilities=
-# 显式以 root 运行
-User=root
-EOF
+    write_xray_override
     # 清理可能残留的 access.log（之前 root 跑过留下的，nobody 写不了）
     rm -f /var/log/xray/access.log /var/log/xray/error.log
     systemctl daemon-reload
     log_done "Xray 安装完成：$(xray version | head -n 1)"
+}
+
+# Xray systemd override 配置——单独提取出来供升级流程也能调用
+# 这是透明代理工作的关键：必须以 root 运行 + 必须有 CAP_NET_ADMIN
+# NoNewPrivileges 必须显式 false，不能用空值（systemd 会忽略空值，保留 true）
+write_xray_override() {
+    mkdir -p /etc/systemd/system/xray.service.d
+    cat > /etc/systemd/system/xray.service.d/override.conf <<'EOF'
+[Service]
+# 清空原 systemd unit 中的 User/Group 配置（systemd 允许用空值清空字符串字段）
+User=
+Group=
+
+# NoNewPrivileges / CapabilityBoundingSet / AmbientCapabilities 不能用空值！
+# 必须显式设置正确的值，否则原 unit 中的 NoNewPrivileges=true 仍生效，
+# 导致 Xray 即使以 root 跑，TPROXY socket 也收不到包（缺 CAP_NET_ADMIN）
+NoNewPrivileges=false
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+# 显式以 root 运行
+User=root
+Group=root
+EOF
 }
 
 install_mosdns() {
@@ -629,6 +642,9 @@ action_upgrade() {
 
     # 4) Xray：官方脚本自带版本检查（看到新版才下载）
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+    # 重写 Xray override.conf（关键：修复 NoNewPrivileges 等配置）
+    # 即使 Xray 没升级，老版本的 override.conf 可能用了错误的空值语法导致 TPROXY 失效
+    write_xray_override
     # =====================================================================
 
     # 部署新脚本（保留配置文件）
