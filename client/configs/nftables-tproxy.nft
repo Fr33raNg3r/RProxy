@@ -146,6 +146,7 @@ table inet tp {
 
         # 跳过 Xray 自己产生的流量（防止环路）
         # Xray 在所有 outbound 的 sockopt 里都设置了 mark=255 (0xff)
+        # 这一条足以识别 Xray 的所有出包——稳定可靠
         meta mark 0xff return
 
         # 跳过 WireGuard 内核模块发出的握手/数据响应包
@@ -156,16 +157,17 @@ table inet tp {
         # ==================== 用户黑白名单（IP 级闭环）====================
         # 白名单：强制直连
         ip daddr @whitelist_ips return
-        # 黑名单：强制走代理（必须在 skuid 0 之前，否则 root 进程会绕过）
+        # 黑名单：强制走代理
         ip daddr @blacklist_ips meta l4proto { tcp, udp } meta mark set 1 accept
         # ==================================================================
 
-        # 强制走代理的 IP（DoH 等）—— 必须在 skuid 0 之前
-        # 否则 mosdns（root 跑）的 DoH 请求会跳过 TPROXY，被 GFW 阻断
+        # 强制走代理的 IP（DoH 等）
         ip daddr @force_proxy_ips meta l4proto { tcp, udp } meta mark set 1 accept
 
-        # 跳过 root 用户（含 Xray、watchdog 等系统进程）的其他流量
-        meta skuid 0 return
+        # 注意：v1.1.0 之前这里有 `meta skuid 0 return`，本意是双重防环路（保护 Xray）
+        # 但 Xray 已经通过 mark=0xff 识别，skuid 0 return 是冗余的过度防御
+        # 代价是所有 root 进程（curl/apt/wget 等）访问国外都被跳过 TPROXY → 裸连失败
+        # 从 v1.1.0 起移除，让旁路由本机所有进程也遵循分流规则
 
         # lo 不处理
         oif lo return
