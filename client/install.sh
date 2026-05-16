@@ -782,7 +782,7 @@ show_completion_info() {
 
 main() {
     require_root
-    # 第二参数（可选）= 版本号。形式：1.1.3 / v1.1.3 / client-v1.1.3
+    # 第二参数（可选）= 版本号。形式：1.1.4 / v1.1.4
     # 留空则装最新 release。也可用环境变量 RPROXY_VERSION 传入。
     # 优先级：CLI 参数 > 环境变量
     local ver_arg="${2:-${RPROXY_VERSION:-}}"
