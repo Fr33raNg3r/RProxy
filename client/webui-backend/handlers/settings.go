@@ -91,9 +91,22 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if needRestartWG {
+		// 1) 重新渲染 wg0.conf 并重启 WG 服务（让新端口监听生效）
 		peers, _ := config.LoadWGPeers()
-		if err := services.RenderWGConfig(cfg, peers); err == nil {
-			_ = services.RestartWG()
+		if err := services.RenderWGConfig(cfg, peers); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("生成 wg0.conf 失败: "+err.Error()))
+			return
+		}
+		if err := services.RestartWG(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 WireGuard 失败: "+err.Error()))
+			return
+		}
+		// 2) 同步更新 nftables output 链中放行 WG 响应包的规则
+		// 若不更新，wg-quick 已切到新端口监听，但 output 链仍按旧端口放行，
+		// WG 响应包会被 TPROXY 劫持 → 远端客户端永远握手不上。
+		if err := services.SyncWGPortToNftables(cfg.WGListenPort); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("同步 nftables WG 端口失败: "+err.Error()))
+			return
 		}
 	}
 

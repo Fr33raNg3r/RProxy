@@ -19,6 +19,8 @@ const (
 	DNSBlacklistPath = "/opt/tproxy-gw/config/dns/blacklist.txt"
 	DNSHostsPath     = "/opt/tproxy-gw/config/dns/hosts.txt"
 
+	NftablesConfPath = "/etc/nftables.conf"
+
 	XraySocksPort = 10808
 	WGInterface   = "wg0"
 )

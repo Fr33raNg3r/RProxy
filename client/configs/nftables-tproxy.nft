@@ -150,9 +150,10 @@ table inet tp {
         meta mark 0xff return
 
         # 跳过 WireGuard 内核模块发出的握手/数据响应包
-        # WG 内核模块作为响应方时，包源端口是 51820（监听端口）
+        # WG 内核模块作为响应方时，包源端口是监听端口
         # 这些包不能被 TPROXY 劫持，必须从物理网卡正常发出去
-        udp sport 51820 return
+        # WebUI 修改 WG 端口时通过 sentinel 标记定位并替换下一行
+        udp sport 51820 return  # rproxy:wg-listen-port
 
         # ==================== 用户黑白名单（IP 级闭环）====================
         # 白名单：强制直连
