@@ -19,6 +19,11 @@ on:
 permissions:
   contents: write   # 需要写权限来推 tag 和创建 Release
 
+# 让 JS actions（actions/checkout 等）使用 Node.js 24
+# GitHub 自 2026-06 起默认 Node 24，2026-09 移除 Node 20——提前 opt-in 消除警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   release:
     runs-on: ubuntu-latest
