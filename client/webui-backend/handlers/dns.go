@@ -33,19 +33,19 @@ func UpdateDNSRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Whitelist != nil {
-		if err := os.WriteFile(config.DNSWhitelistPath, []byte(*req.Whitelist), 0644); err != nil {
+		if err := os.WriteFile(config.DNSWhitelistPath, []byte(*req.Whitelist), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
 	}
 	if req.Blacklist != nil {
-		if err := os.WriteFile(config.DNSBlacklistPath, []byte(*req.Blacklist), 0644); err != nil {
+		if err := os.WriteFile(config.DNSBlacklistPath, []byte(*req.Blacklist), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
 	}
 	if req.Hosts != nil {
-		if err := os.WriteFile(config.DNSHostsPath, []byte(*req.Hosts), 0644); err != nil {
+		if err := os.WriteFile(config.DNSHostsPath, []byte(*req.Hosts), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}

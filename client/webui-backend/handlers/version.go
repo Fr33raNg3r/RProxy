@@ -90,7 +90,7 @@ func GetVersion(w http.ResponseWriter, r *http.Request) {
 // 立即返回，1-2 分钟后 WebUI 自己会被升级流程重启
 func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	// 写一个标记文件，install.sh 升级时能识别"从 WebUI 触发"（可选）
-	_ = os.WriteFile("/tmp/rproxy-upgrade-triggered", []byte(time.Now().Format(time.RFC3339)), 0644)
+	_ = os.WriteFile("/tmp/rproxy-upgrade-triggered", []byte(time.Now().Format(time.RFC3339)), 0600)
 
 	// 异步执行 install.sh upgrade，输出到日志
 	go func() {

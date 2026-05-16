@@ -62,7 +62,14 @@ func CreateNode(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := config.LoadWebUIConfig()
 	if cfg != nil && cfg.CurrentNodeID == "" && n.Enabled {
 		cfg.CurrentNodeID = n.ID
-		_ = config.SaveWebUIConfig(cfg)
+		if err := config.SaveWebUIConfig(cfg); err != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"ok":      true,
+				"node":    n,
+				"warning": "节点已添加，但保存当前节点 ID 失败: " + err.Error(),
+			})
+			return
+		}
 		if err := services.RenderXrayConfig(nodes, n.ID); err != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"ok":      true,
@@ -71,7 +78,14 @@ func CreateNode(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		_ = services.RestartXray()
+		if err := services.RestartXray(); err != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"ok":      true,
+				"node":    n,
+				"warning": "节点已添加并设为当前，但 Xray 重启失败: " + err.Error(),
+			})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"ok":              true,
 			"node":            n,
@@ -127,7 +141,10 @@ func UpdateNode(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染配置失败: "+err.Error()))
 			return
 		}
-		_ = services.RestartXray()
+		if err := services.RestartXray(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
@@ -160,9 +177,18 @@ func DeleteNode(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		_ = config.SaveWebUIConfig(cfg)
-		_ = services.RenderXrayConfig(newNodes, cfg.CurrentNodeID)
-		_ = services.RestartXray()
+		if err := config.SaveWebUIConfig(cfg); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("保存当前节点 ID 失败: "+err.Error()))
+			return
+		}
+		if err := services.RenderXrayConfig(newNodes, cfg.CurrentNodeID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 Xray 配置失败: "+err.Error()))
+			return
+		}
+		if err := services.RestartXray(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
