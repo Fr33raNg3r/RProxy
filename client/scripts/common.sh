@@ -114,45 +114,42 @@ get_installed_version() {
     fi
 }
 
-# 查询 GitHub 上指定组件 (client / server) 的最新 release tag。
-# 成功输出 "client-v1.1.3" 这种 tag 字符串；失败返回空。
+# 查询 GitHub 上最新 release tag（vX.Y.Z，client/server 同步发布）。
+# 成功输出 "v1.1.4" 这种 tag 字符串；失败返回空。
 # 用 grep+sed 解析 JSON 避免依赖 jq（install.sh 早期阶段 jq 可能没装）。
 get_latest_release_tag() {
-    local prefix="${1:?用法: get_latest_release_tag <client|server>}-v"
     local tag
     tag=$(curl -fsSL --max-time 5 "${RELEASES_API}" 2>/dev/null \
         | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
         | sed -E 's/.*"([^"]+)"$/\1/' \
-        | grep -E "^${prefix}[0-9]+\.[0-9]+\.[0-9]+$" \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
         | head -n 1)
     echo "$tag"
 }
 
-# 兼容旧调用：返回最新 client release 的纯版本号（去掉 client-v 前缀）。
+# 兼容旧调用：返回最新 release 的纯版本号（去掉 v 前缀）。
 # 失败返回 "获取失败"，调用方据此显示提示。
 get_remote_version() {
     local tag
-    tag=$(get_latest_release_tag client)
+    tag=$(get_latest_release_tag)
     if [[ -z "$tag" ]]; then
         echo "获取失败"
     else
-        echo "${tag#client-v}"
+        echo "${tag#v}"
     fi
 }
 
-# 把用户输入的版本号 (1.1.3 / v1.1.3 / client-v1.1.3) 归一化为完整 tag，
-# 并校验形如 <component>-vX.Y.Z。校验失败直接 die。
-# 结果赋值给全局 RPROXY_TAG，供 fetch_source 等使用。
+# 把用户输入的版本号 (1.1.4 / v1.1.4) 归一化为完整 tag vX.Y.Z。
+# 校验失败直接 die。结果赋值给全局 RPROXY_TAG，供 fetch_source 等使用。
 normalize_release_tag() {
-    local raw="$1" component="${2:?用法: normalize_release_tag <ver> <client|server>}"
+    local raw="$1"
     local tag
     case "$raw" in
-        ${component}-v*) tag="$raw" ;;
-        v*)              tag="${component}-${raw}" ;;
-        *)               tag="${component}-v${raw}" ;;
+        v*) tag="$raw" ;;
+        *)  tag="v${raw}" ;;
     esac
-    if ! [[ "$tag" =~ ^${component}-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        die "非法版本号格式: '$raw'（期望: X.Y.Z / vX.Y.Z / ${component}-vX.Y.Z）"
+    if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        die "非法版本号格式: '$raw'（期望: X.Y.Z 或 vX.Y.Z）"
     fi
     RPROXY_TAG="$tag"
 }

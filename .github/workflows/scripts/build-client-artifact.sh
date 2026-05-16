@@ -50,7 +50,7 @@ cp -a client/webui-frontend/dist/. "${staging}/www/"
 cp -a client/scripts  "${staging}/scripts"
 cp -a client/configs  "${staging}/configs"
 cp -a client/install.sh "${staging}/install.sh"
-cp -a client/VERSION    "${staging}/VERSION"
+cp -a VERSION         "${staging}/VERSION"
 
 # 一个简单的 manifest，让用户/调试者一眼看出包是什么
 cat > "${staging}/MANIFEST" <<EOF

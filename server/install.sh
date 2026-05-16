@@ -321,45 +321,39 @@ EOF
 # ============================================================================
 
 fetch_source() {
-    log_step "拉取源码到 ${BUILD_DIR}"
+    log_step "准备服务端 build 目录 ${BUILD_DIR}"
     rm -rf "${BUILD_DIR}"
+    mkdir -p "${BUILD_DIR}"
+
+    # 本地开发模式：SELF_DIR 自带 scripts + configs（仓库工作区）
     if [[ "${LOCAL_MODE}" == "1" && -d "${SELF_DIR}/scripts" && -d "${SELF_DIR}/configs" ]]; then
-        log_info "本地模式：从 ${SELF_DIR} 复制源码"
-        cp -a "${SELF_DIR}" "${BUILD_DIR}"
-    else
-        mkdir -p "${BUILD_DIR}"
-        # 选择 ref：用户指定的 tag > 自动查询最新 release > main 兜底
-        local ref tarball_prefix
-        if [[ -n "${RPROXY_TAG:-}" ]]; then
-            ref="${RPROXY_TAG}"
-            log_info "远程模式：拉取 tag ${ref}"
-        else
-            local latest
-            latest=$(get_latest_release_tag server || true)
-            if [[ -n "$latest" ]]; then
-                ref="$latest"
-                log_info "远程模式：未指定版本，使用最新 release ${ref}"
-            else
-                ref="main"
-                log_warn "未能查询到 release，回退到 main 分支（不稳定）"
-            fi
-        fi
-        # tarball 顶层目录名 = "RProxy-<ref-without-leading-v>"
-        # tag "server-v1.1.3" → 顶层 "RProxy-server-v1.1.3"
-        # branch "main"       → 顶层 "RProxy-main"
-        tarball_prefix="RProxy-${ref#v}"
-        local url
-        if [[ "$ref" == "main" ]]; then
-            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/heads/main.tar.gz"
-        else
-            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/tags/${ref}.tar.gz"
-        fi
-        if ! curl -fsSL "$url" \
-                | tar xz -C "${BUILD_DIR}" --strip-components=2 "${tarball_prefix}/server"; then
-            die "源码下载失败: $url"
-        fi
+        log_info "本地模式：从 ${SELF_DIR} 复制"
+        cp -a "${SELF_DIR}/." "${BUILD_DIR}/"
+        log_done "Build 目录已就绪"
+        return
     fi
-    log_done "源码已就绪"
+
+    # 远程模式：下载 release asset
+    local tag
+    if [[ -n "${RPROXY_TAG:-}" ]]; then
+        tag="${RPROXY_TAG}"
+        log_info "远程模式：使用指定 tag ${tag}"
+    else
+        tag=$(get_latest_release_tag || true)
+        [[ -n "$tag" ]] || die "未能查询到 release —— 请检查网络或在 GitHub 上确认已存在 vX.Y.Z 发布"
+        log_info "远程模式：使用最新 release ${tag}"
+    fi
+    local version="${tag#v}"
+    local asset="server-v${version}.tar.gz"
+    local url="https://github.com/${REPO_SLUG}/releases/download/${tag}/${asset}"
+
+    log_info "下载 release 产物：${url}"
+    if ! curl -fsSL "$url" | tar xz -C "${BUILD_DIR}"; then
+        die "release 产物下载失败: ${url}
+（若该 tag 是从旧版 install.sh 创建的、不含 server 产物，请改用更新的 tag）"
+    fi
+    [[ -f "${BUILD_DIR}/install.sh" ]] || die "下载的产物缺 install.sh，包可能损坏"
+    log_done "release 产物已展开到 ${BUILD_DIR}"
 }
 
 install_xray() {
@@ -734,7 +728,7 @@ main() {
     # 留空则装最新 release。也可用环境变量 RPROXY_VERSION 传入。
     local ver_arg="${2:-${RPROXY_VERSION:-}}"
     if [[ -n "$ver_arg" ]]; then
-        normalize_release_tag "$ver_arg" "server"
+        normalize_release_tag "$ver_arg"
         log_info "目标版本：${RPROXY_TAG}"
     fi
 

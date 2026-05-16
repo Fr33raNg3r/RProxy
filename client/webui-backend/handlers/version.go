@@ -22,10 +22,12 @@ var (
 const (
 	versionFile = "/opt/tproxy-gw/VERSION"
 	// 用 Releases API 而不是 raw VERSION 文件 —— 避免用户拿到尚未打 tag 的 main 分支中间版本。
-	// per_page=30 足够找到最近一个 client-v* 前缀的 release（按发布时间倒序返回）。
+	// per_page=30 足够找到最近一个 vX.Y.Z 前缀的 release（按发布时间倒序返回）。
 	releasesURL = "https://api.github.com/repos/Fr33raNg3r/RProxy/releases?per_page=30"
-	// 仅识别 client 组件的 release tag，server 端有独立的发布周期。
-	releaseTagPrefix = "client-v"
+	// v1.1.4 起 client/server 同步发布，tag 统一为 vX.Y.Z；
+	// 之前一段时间用过 client-v* 分组件 tag，保留作为兼容前缀以便老 WebUI 升级期间能识别。
+	releaseTagPrefix       = "v"
+	releaseTagPrefixLegacy = "client-v"
 )
 
 // InitVersionCheck WebUI 启动时调用一次
@@ -79,13 +81,48 @@ func fetchLatestClientRelease() string {
 	if err := json.Unmarshal(body, &releases); err != nil {
 		return ""
 	}
-	// API 按发布时间倒序返回，取第一个匹配 client-v 前缀的即可
+	// API 按发布时间倒序返回，取第一个匹配前缀的即可。
+	// 注意必须先严格校验是 vX.Y.Z 格式，否则 "v-anything" 也会被误识别。
 	for _, r := range releases {
-		if strings.HasPrefix(r.TagName, releaseTagPrefix) {
-			return strings.TrimPrefix(r.TagName, releaseTagPrefix)
+		if v := stripVersionPrefix(r.TagName); v != "" {
+			return v
 		}
 	}
 	return ""
+}
+
+// stripVersionPrefix 把 tag_name 校验并剥掉前缀，返回纯版本号 (e.g. "1.1.4")。
+// 不是合法 tag 形式则返回空。
+func stripVersionPrefix(tag string) string {
+	for _, p := range []string{releaseTagPrefix, releaseTagPrefixLegacy} {
+		if !strings.HasPrefix(tag, p) {
+			continue
+		}
+		rest := strings.TrimPrefix(tag, p)
+		// 只接受形如 1.1.4 的（避免误吞 "v-experimental" 等）
+		if isSemverLike(rest) {
+			return rest
+		}
+	}
+	return ""
+}
+
+func isSemverLike(s string) bool {
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // GetVersion GET /api/version

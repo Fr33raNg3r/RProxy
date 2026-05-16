@@ -230,12 +230,12 @@ fetch_source() {
         tag="${RPROXY_TAG}"
         log_info "远程模式：使用指定 tag ${tag}"
     else
-        tag=$(get_latest_release_tag client || true)
-        [[ -n "$tag" ]] || die "未能查询到 client release —— 请检查网络或在 GitHub 上确认已存在 client-v* 发布"
+        tag=$(get_latest_release_tag || true)
+        [[ -n "$tag" ]] || die "未能查询到 release —— 请检查网络或在 GitHub 上确认已存在 vX.Y.Z 发布"
         log_info "远程模式：使用最新 release ${tag}"
     fi
-    # tag 格式 client-vX.Y.Z → 版本号
-    local version="${tag#client-v}"
+    # tag 格式 vX.Y.Z → 版本号
+    local version="${tag#v}"
     local asset="client-v${version}-linux-amd64.tar.gz"
     local url="https://github.com/${REPO_SLUG}/releases/download/${tag}/${asset}"
 
@@ -788,7 +788,7 @@ main() {
     local ver_arg="${2:-${RPROXY_VERSION:-}}"
     if [[ -n "$ver_arg" ]]; then
         # 由 common.sh 提供的归一化函数 → 设置 RPROXY_TAG 全局变量
-        normalize_release_tag "$ver_arg" "client"
+        normalize_release_tag "$ver_arg"
         log_info "目标版本：${RPROXY_TAG}"
     fi
 
