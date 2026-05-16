@@ -668,8 +668,12 @@ action_upgrade() {
     "${BIN_DIR}/webui" render-wg || true
 
     nft -f /etc/nftables.conf
-    restart_service xray
+    # 重启顺序很关键：mosdns 必须先于 Xray 启动
+    # 否则 Xray 启动时需要解析 VPS 域名，但 mosdns 还没起来 → Xray 解析失败 → 退出
+    # 即使 Xray 配置已经预解析了 IP，mosdns 先起也是更安全的顺序
     restart_service tproxy-gw-mosdns
+    sleep 2
+    restart_service xray
     restart_service tproxy-gw-webui
 
     # 只在装过编译工具时才卸载（如果跳过了编译就不需要卸载）

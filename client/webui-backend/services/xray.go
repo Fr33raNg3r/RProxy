@@ -1,11 +1,14 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
@@ -154,13 +157,19 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 		wsPath = "/"
 	}
 
+	// 把 VPS 域名解析为 IP——避免 Xray 启动时依赖 mosdns
+	// 这是消除"Xray <-> mosdns 循环依赖"的关键
+	// 如果 n.Address 已经是 IP（如 1.2.3.4），net.LookupHost 会原样返回
+	// 如果解析失败（如初次部署 VPS 尚未生效），保留原域名让 Xray 自己尝试
+	address := resolveAddress(n.Address)
+
 	return map[string]interface{}{
 		"tag":      "proxy",
 		"protocol": "vmess",
 		"settings": map[string]interface{}{
 			"vnext": []interface{}{
 				map[string]interface{}{
-					"address": n.Address, // 用域名连接，不解析为 IP
+					"address": address, // 优先用解析后的 IP，避免循环依赖
 					"port":    n.Port,
 					"users": []interface{}{
 						map[string]interface{}{
@@ -178,11 +187,11 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 			"wsSettings": map[string]interface{}{
 				"path": wsPath,
 				"headers": map[string]interface{}{
-					"Host": host,
+					"Host": host, // 保留域名作为 WS Host header
 				},
 			},
 			"tlsSettings": map[string]interface{}{
-				"serverName":    host,
+				"serverName":    host, // 保留域名作为 TLS SNI
 				"allowInsecure": false,
 				"alpn":          []string{"h2", "http/1.1"},
 			},
@@ -192,6 +201,39 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 			},
 		},
 	}
+}
+
+// resolveAddress 把域名解析为 IPv4 地址
+// 如果输入已经是 IP 或解析失败，返回原值
+// 用于在 Xray 配置生成时预解析 VPS 域名，避免运行时依赖 mosdns
+func resolveAddress(addr string) string {
+	// 如果已经是 IPv4，直接返回
+	if net.ParseIP(addr) != nil {
+		return addr
+	}
+	// 用国内 DNS 直接解析（不走系统 resolv.conf，避免循环依赖）
+	// 用一个 Resolver 显式指定上游
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "udp", "223.5.5.5:53") // 阿里 DNS（不需要走代理）
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := r.LookupHost(ctx, addr)
+	if err != nil || len(ips) == 0 {
+		// 解析失败：保留域名让 Xray 自己尝试（旧行为）
+		return addr
+	}
+	// 优先返回 IPv4
+	for _, ip := range ips {
+		if net.ParseIP(ip) != nil && !strings.Contains(ip, ":") {
+			return ip
+		}
+	}
+	return ips[0]
 }
 
 // 路由规则（v1.1.1 起简化）：
