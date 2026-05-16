@@ -6,7 +6,9 @@
 
 # ---------- 全局常量 ----------
 readonly REPO_URL="https://github.com/Fr33raNg3r/RProxy.git"
+readonly REPO_SLUG="Fr33raNg3r/RProxy"
 readonly RAW_URL="https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server"
+readonly RELEASES_API="https://api.github.com/repos/${REPO_SLUG}/releases?per_page=30"
 readonly INSTALL_DIR="/opt/tproxy-server"
 readonly XRAY_CONFIG_FILE="/usr/local/etc/xray/config.json"
 readonly BUILD_DIR="/tmp/tproxy-server-build"
@@ -96,15 +98,47 @@ get_installed_version() {
     [[ -f "${INSTALL_DIR}/VERSION" ]] && cat "${INSTALL_DIR}/VERSION" || echo "未安装"
 }
 
-# 获取 GitHub 上的最新版本号（带 5 秒超时；失败返回"获取失败"）
+# 查询 GitHub 上指定组件 (client / server) 的最新 release tag。
+# 成功输出 "server-v1.1.3" 这种 tag 字符串；失败返回空。
+# 用 grep+sed 解析 JSON 避免依赖 jq（install.sh 早期阶段 jq 可能没装）。
+get_latest_release_tag() {
+    local prefix="${1:?用法: get_latest_release_tag <client|server>}-v"
+    local tag
+    tag=$(curl -fsSL --max-time 5 "${RELEASES_API}" 2>/dev/null \
+        | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+        | sed -E 's/.*"([^"]+)"$/\1/' \
+        | grep -E "^${prefix}[0-9]+\.[0-9]+\.[0-9]+$" \
+        | head -n 1)
+    echo "$tag"
+}
+
+# 兼容旧调用：返回最新 server release 的纯版本号（去掉 server-v 前缀）。
+# 失败返回 "获取失败"，调用方据此显示提示。
 get_remote_version() {
-    local v
-    v=$(curl -fsSL --max-time 5 "${RAW_URL}/VERSION" 2>/dev/null | tr -d '[:space:]')
-    if [[ -z "$v" ]]; then
+    local tag
+    tag=$(get_latest_release_tag server)
+    if [[ -z "$tag" ]]; then
         echo "获取失败"
     else
-        echo "$v"
+        echo "${tag#server-v}"
     fi
+}
+
+# 把用户输入的版本号 (1.1.3 / v1.1.3 / server-v1.1.3) 归一化为完整 tag，
+# 并校验形如 <component>-vX.Y.Z。校验失败直接 die。
+# 结果赋值给全局 RPROXY_TAG，供 fetch_source 等使用。
+normalize_release_tag() {
+    local raw="$1" component="${2:?用法: normalize_release_tag <ver> <client|server>}"
+    local tag
+    case "$raw" in
+        ${component}-v*) tag="$raw" ;;
+        v*)              tag="${component}-${raw}" ;;
+        *)               tag="${component}-v${raw}" ;;
+    esac
+    if ! [[ "$tag" =~ ^${component}-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        die "非法版本号格式: '$raw'（期望: X.Y.Z / vX.Y.Z / ${component}-vX.Y.Z）"
+    fi
+    RPROXY_TAG="$tag"
 }
 
 # ---------- SSH 端口检测 ----------

@@ -327,13 +327,36 @@ fetch_source() {
         log_info "本地模式：从 ${SELF_DIR} 复制源码"
         cp -a "${SELF_DIR}" "${BUILD_DIR}"
     else
-        log_info "远程模式：从 GitHub 下载（仅 server 子目录）"
         mkdir -p "${BUILD_DIR}"
-        # --strip-components=2 去掉 RProxy-main/server/ 两层
-        # 后面的过滤参数让 tar 只解压 server/ 目录下的文件
-        if ! curl -fsSL "https://github.com/Fr33raNg3r/RProxy/archive/refs/heads/main.tar.gz" \
-                | tar xz -C "${BUILD_DIR}" --strip-components=2 'RProxy-main/server'; then
-            die "源码下载失败"
+        # 选择 ref：用户指定的 tag > 自动查询最新 release > main 兜底
+        local ref tarball_prefix
+        if [[ -n "${RPROXY_TAG:-}" ]]; then
+            ref="${RPROXY_TAG}"
+            log_info "远程模式：拉取 tag ${ref}"
+        else
+            local latest
+            latest=$(get_latest_release_tag server || true)
+            if [[ -n "$latest" ]]; then
+                ref="$latest"
+                log_info "远程模式：未指定版本，使用最新 release ${ref}"
+            else
+                ref="main"
+                log_warn "未能查询到 release，回退到 main 分支（不稳定）"
+            fi
+        fi
+        # tarball 顶层目录名 = "RProxy-<ref-without-leading-v>"
+        # tag "server-v1.1.3" → 顶层 "RProxy-server-v1.1.3"
+        # branch "main"       → 顶层 "RProxy-main"
+        tarball_prefix="RProxy-${ref#v}"
+        local url
+        if [[ "$ref" == "main" ]]; then
+            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/heads/main.tar.gz"
+        else
+            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/tags/${ref}.tar.gz"
+        fi
+        if ! curl -fsSL "$url" \
+                | tar xz -C "${BUILD_DIR}" --strip-components=2 "${tarball_prefix}/server"; then
+            die "源码下载失败: $url"
         fi
     fi
     log_done "源码已就绪"
@@ -707,13 +730,21 @@ show_completion_info() {
 
 main() {
     require_root
+    # 第二参数（可选）= 版本号。形式：1.1.3 / v1.1.3 / server-v1.1.3
+    # 留空则装最新 release。也可用环境变量 RPROXY_VERSION 传入。
+    local ver_arg="${2:-${RPROXY_VERSION:-}}"
+    if [[ -n "$ver_arg" ]]; then
+        normalize_release_tag "$ver_arg" "server"
+        log_info "目标版本：${RPROXY_TAG}"
+    fi
+
     case "${1:-}" in
         install)   action_install_fresh ;;
         upgrade)   action_upgrade ;;
         uninstall) action_uninstall ;;
         status)    action_status ;;
         "")        show_menu ;;
-        *)         echo "用法: $0 [install|upgrade|uninstall|status]"; exit 1 ;;
+        *)         echo "用法: $0 [install|upgrade|uninstall|status] [version]"; exit 1 ;;
     esac
 }
 

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,9 +20,12 @@ var (
 )
 
 const (
-	versionFile  = "/opt/tproxy-gw/VERSION"
-	versionURL   = "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/client/VERSION"
-	upgradeShell = "/opt/tproxy-gw/install.sh upgrade"
+	versionFile = "/opt/tproxy-gw/VERSION"
+	// 用 Releases API 而不是 raw VERSION 文件 —— 避免用户拿到尚未打 tag 的 main 分支中间版本。
+	// per_page=30 足够找到最近一个 client-v* 前缀的 release（按发布时间倒序返回）。
+	releasesURL = "https://api.github.com/repos/Fr33raNg3r/RProxy/releases?per_page=30"
+	// 仅识别 client 组件的 release tag，server 端有独立的发布周期。
+	releaseTagPrefix = "client-v"
 )
 
 // InitVersionCheck WebUI 启动时调用一次
@@ -35,29 +40,52 @@ func InitVersionCheck() {
 	// 5 秒后异步拉远程
 	go func() {
 		time.Sleep(5 * time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, "GET", versionURL, nil)
-		if err != nil {
-			return
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != 200 {
-			return
-		}
-		buf := make([]byte, 32)
-		n, _ := resp.Body.Read(buf)
-		v := strings.TrimSpace(string(buf[:n]))
+		v := fetchLatestClientRelease()
 		if v != "" {
 			versionMu.Lock()
 			cachedLatestVer = v
 			versionMu.Unlock()
 		}
 	}()
+}
+
+// fetchLatestClientRelease 查询 GitHub Releases API，返回最新的 client release 版本号
+// （已去掉 "client-v" 前缀）。失败返回空串。
+func fetchLatestClientRelease() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", releasesURL, nil)
+	if err != nil {
+		return ""
+	}
+	// 不带 token 的 API 调用有 60 次/小时/IP 速率限制，足以应对启动时的一次查询。
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return ""
+	}
+	// 限制读取量，防御异常大响应
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+	if err != nil {
+		return ""
+	}
+	var releases []struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return ""
+	}
+	// API 按发布时间倒序返回，取第一个匹配 client-v 前缀的即可
+	for _, r := range releases {
+		if strings.HasPrefix(r.TagName, releaseTagPrefix) {
+			return strings.TrimPrefix(r.TagName, releaseTagPrefix)
+		}
+	}
+	return ""
 }
 
 // GetVersion GET /api/version

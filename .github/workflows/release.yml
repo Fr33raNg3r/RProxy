@@ -1,0 +1,75 @@
+name: Auto Release on VERSION bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - client/VERSION
+      - server/VERSION
+  # 允许手工触发，便于补打漏掉的 tag
+  workflow_dispatch:
+    inputs:
+      component:
+        description: '组件 (client / server / both)'
+        required: true
+        default: both
+        type: choice
+        options: [client, server, both]
+
+permissions:
+  contents: write   # 需要写权限来推 tag 和创建 Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 用 GITHUB_TOKEN 推 tag 需要带 persist-credentials（默认即 true）
+
+      - name: Determine which components changed
+        id: detect
+        env:
+          MANUAL_COMPONENT: ${{ github.event.inputs.component }}
+        run: |
+          set -euo pipefail
+          client_changed=0
+          server_changed=0
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            case "${MANUAL_COMPONENT}" in
+              client) client_changed=1 ;;
+              server) server_changed=1 ;;
+              both)   client_changed=1; server_changed=1 ;;
+            esac
+          else
+            # push 事件：对比 before..after 看哪个 VERSION 文件变了
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+            # 如果 base 是全零（强推或首次 push），用 HEAD~1 作为基准
+            if [[ "$base" == "0000000000000000000000000000000000000000" ]]; then
+              base=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+            fi
+            changed=$(git diff --name-only "$base" "$head" || true)
+            echo "Changed files: $changed"
+            grep -qx 'client/VERSION' <<<"$changed" && client_changed=1 || true
+            grep -qx 'server/VERSION' <<<"$changed" && server_changed=1 || true
+          fi
+
+          echo "client_changed=$client_changed" >> "$GITHUB_OUTPUT"
+          echo "server_changed=$server_changed" >> "$GITHUB_OUTPUT"
+          echo "==> client_changed=$client_changed  server_changed=$server_changed"
+
+      - name: Release client
+        if: steps.detect.outputs.client_changed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/workflows/scripts/make-release.sh client
+
+      - name: Release server
+        if: steps.detect.outputs.server_changed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/workflows/scripts/make-release.sh server
