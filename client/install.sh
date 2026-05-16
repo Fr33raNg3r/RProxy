@@ -155,23 +155,17 @@ install_base_packages() {
     log_done "基础软件包安装完成"
 }
 
-install_build_toolchain() {
-    log_step "安装编译工具链（Go + Node.js + npm）"
-    apt-get install -y --no-install-recommends golang-go nodejs npm
-    # 配置国内镜像
-    npm config set registry https://registry.npmmirror.com
-    export GOPROXY=https://goproxy.cn,direct
-    export GO111MODULE=on
-    log_done "编译工具链安装完成"
-}
-
-remove_build_toolchain() {
-    log_step "卸载编译工具链以释放磁盘"
-    apt-get remove -y --purge golang-go nodejs npm 2>/dev/null || true
-    apt-get autoremove -y --purge 2>/dev/null || true
-    rm -rf /root/.npm /root/.cache/go-build /root/go 2>/dev/null || true
-    apt-get clean
-    log_done "编译工具链已清理"
+# v1.1.3 起改为下载 CI 预编译的 webui 二进制 + 前端静态文件，
+# 不再在目标机安装 Go/Node 工具链。如有遗留的旧工具链可通过此函数清理。
+remove_legacy_build_toolchain() {
+    if dpkg -l golang-go nodejs npm 2>/dev/null | grep -q '^ii'; then
+        log_step "检测到旧版安装遗留的 Go/Node 工具链，清理以释放磁盘"
+        apt-get remove -y --purge golang-go nodejs npm 2>/dev/null || true
+        apt-get autoremove -y --purge 2>/dev/null || true
+        rm -rf /root/.npm /root/.cache/go-build /root/go 2>/dev/null || true
+        apt-get clean
+        log_done "旧工具链已清理"
+    fi
 }
 
 disable_ipv6() {
@@ -217,48 +211,41 @@ EOF
 # ============================================================================
 
 fetch_source() {
-    log_step "拉取 RProxy 客户端源码到 ${BUILD_DIR}"
+    log_step "准备客户端 build 目录 ${BUILD_DIR}"
     rm -rf "${BUILD_DIR}"
-    if [[ "${LOCAL_MODE}" == "1" && -d "${SELF_DIR}/webui-backend" ]]; then
-        # 本地模式：直接复制
-        log_info "本地模式：从 ${SELF_DIR} 复制源码"
-        cp -a "${SELF_DIR}" "${BUILD_DIR}"
-    else
-        mkdir -p "${BUILD_DIR}"
-        # 选择 ref：用户指定的 tag > 自动查询最新 release > main 兜底
-        local ref tarball_prefix
-        if [[ -n "${RPROXY_TAG:-}" ]]; then
-            ref="${RPROXY_TAG}"
-            log_info "远程模式：拉取 tag ${ref}"
-        else
-            local latest
-            latest=$(get_latest_release_tag client || true)
-            if [[ -n "$latest" ]]; then
-                ref="$latest"
-                log_info "远程模式：未指定版本，使用最新 release ${ref}"
-            else
-                ref="main"
-                log_warn "未能查询到 release，回退到 main 分支（不稳定）"
-            fi
-        fi
-        # tarball 顶层目录名 = "<repo>-<ref-without-leading-v-if-any-prefix-version>"
-        # GitHub 行为：tags/X 的 tarball 解压顶层是 RProxy-X（去掉前缀 v 也保留——见下方）
-        # tag "client-v1.1.3" → 顶层 "RProxy-client-v1.1.3"
-        # branch "main"     → 顶层 "RProxy-main"
-        tarball_prefix="RProxy-${ref#v}"
-        local url
-        if [[ "$ref" == "main" ]]; then
-            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/heads/main.tar.gz"
-        else
-            url="https://github.com/Fr33raNg3r/RProxy/archive/refs/tags/${ref}.tar.gz"
-        fi
-        # --strip-components=2 去掉 <prefix>/client/ 两层，只解压 client 子目录
-        if ! curl -fsSL "$url" \
-                | tar xz -C "${BUILD_DIR}" --strip-components=2 "${tarball_prefix}/client"; then
-            die "源码下载失败: $url"
-        fi
+    mkdir -p "${BUILD_DIR}"
+
+    # 本地开发模式：SELF_DIR 已经预先 build 好（含 bin/webui + www/）
+    # 直接用，方便开发者测试当前工作区改动而不必每次发 release
+    if [[ "${LOCAL_MODE}" == "1" && -x "${SELF_DIR}/bin/webui" && -d "${SELF_DIR}/www" ]]; then
+        log_info "本地模式（预编译就绪）：从 ${SELF_DIR} 复制"
+        cp -a "${SELF_DIR}/." "${BUILD_DIR}/"
+        log_done "Build 目录已就绪"
+        return
     fi
-    log_done "源码已就绪"
+
+    # 远程模式：下载预编译 release asset
+    local tag
+    if [[ -n "${RPROXY_TAG:-}" ]]; then
+        tag="${RPROXY_TAG}"
+        log_info "远程模式：使用指定 tag ${tag}"
+    else
+        tag=$(get_latest_release_tag client || true)
+        [[ -n "$tag" ]] || die "未能查询到 client release —— 请检查网络或在 GitHub 上确认已存在 client-v* 发布"
+        log_info "远程模式：使用最新 release ${tag}"
+    fi
+    # tag 格式 client-vX.Y.Z → 版本号
+    local version="${tag#client-v}"
+    local asset="client-v${version}-linux-amd64.tar.gz"
+    local url="https://github.com/${REPO_SLUG}/releases/download/${tag}/${asset}"
+
+    log_info "下载预编译产物：${url}"
+    if ! curl -fsSL "$url" | tar xz -C "${BUILD_DIR}"; then
+        die "预编译产物下载失败: ${url}
+（若该 tag 是从旧版 install.sh 创建的、不含预编译产物，请改用更新的 tag）"
+    fi
+    [[ -x "${BUILD_DIR}/bin/webui" ]] || die "下载的产物缺 bin/webui，包可能损坏"
+    log_done "预编译产物已展开到 ${BUILD_DIR}"
 }
 
 install_xray() {
@@ -331,48 +318,16 @@ install_mosdns() {
     log_done "mosdns 已安装：$(${BIN_DIR}/mosdns version 2>&1 | head -n 1)"
 }
 
-build_webui() {
-    log_step "编译 WebUI 后端（Go）"
-    cd "${BUILD_DIR}/webui-backend"
-    # 多镜像 fallback：goproxy.cn 优先，失败时自动尝试 goproxy.io 和官方
-    export GOPROXY=https://goproxy.cn,https://goproxy.io,https://proxy.golang.org,direct
-    export GOSUMDB=sum.golang.google.cn  # 使用国内镜像的校验源
-    
-    # go mod tidy 带重试（应对 CDN 抖动 / HTTP/2 协议错误）
-    local retry=0
-    local max_retry=3
-    while [[ $retry -lt $max_retry ]]; do
-        if go mod tidy; then
-            break
-        fi
-        retry=$((retry + 1))
-        if [[ $retry -lt $max_retry ]]; then
-            log_warn "go mod tidy 失败，等待 5 秒后重试（$retry/$max_retry）..."
-            sleep 5
-            # 切换到下一个 GOPROXY，跳过当前可能出问题的镜像
-            case $retry in
-                1) export GOPROXY=https://goproxy.io,https://proxy.golang.org,direct ;;
-                2) export GOPROXY=https://proxy.golang.org,direct ;;
-            esac
-        fi
-    done
-    
-    if [[ $retry -eq $max_retry ]]; then
-        die "go mod tidy 经过 $max_retry 次重试仍失败，请检查网络后重新运行 install.sh"
-    fi
-    
-    go build -trimpath -ldflags='-s -w' -o "${BIN_DIR}/webui" .
-    log_done "Go 后端编译完成"
+deploy_webui() {
+    log_step "部署预编译 WebUI 后端"
+    install -m 0755 "${BUILD_DIR}/bin/webui" "${BIN_DIR}/webui"
+    log_done "Go 后端已部署：$("${BIN_DIR}/webui" --version 2>/dev/null || echo OK)"
 
-    log_step "编译 WebUI 前端（Vue）"
-    cd "${BUILD_DIR}/webui-frontend"
-    npm install --no-audit --no-fund
-    npm run build
+    log_step "部署预编译 WebUI 前端"
     rm -rf "${WWW_DIR}"
     mkdir -p "${WWW_DIR}"
-    cp -a dist/* "${WWW_DIR}/"
-    log_done "Vue 前端编译并部署完成"
-    cd /
+    cp -a "${BUILD_DIR}/www/." "${WWW_DIR}/"
+    log_done "Vue 前端已部署"
 }
 
 download_geo_data() {
@@ -592,10 +547,7 @@ action_install_fresh() {
     # 创建目录
     mkdir -p "${INSTALL_DIR}" "${BIN_DIR}"
 
-    install_build_toolchain
-    build_webui
-    # 保存源码哈希——升级时若哈希一致就跳过重新编译
-    compute_webui_hash "${BUILD_DIR}" > "${INSTALL_DIR}/.webui-hash"
+    deploy_webui
     install_mosdns
     download_geo_data
 
@@ -607,7 +559,8 @@ action_install_fresh() {
     disable_systemd_resolved      # mosdns 启动前才停掉 systemd-resolved，避免安装中 DNS 中断
     enable_services
 
-    remove_build_toolchain
+    # 旧版升级到此版会有 golang-go/nodejs/npm 残留，顺手清理
+    remove_legacy_build_toolchain
 
     show_completion_info
 }
@@ -635,20 +588,15 @@ action_upgrade() {
     new_ver=$(cat "${BUILD_DIR}/VERSION")
     log_info "本地版本：${old_ver}    最新版本：${new_ver}"
 
-    # ===================== 按需重做：避免无谓的下载/编译 =====================
-    # 1) WebUI 哈希比对：源码不变就不装编译工具，不重新编译
-    local old_webui_hash new_webui_hash
-    old_webui_hash=$(cat "${INSTALL_DIR}/.webui-hash" 2>/dev/null || echo "")
-    new_webui_hash=$(compute_webui_hash "${BUILD_DIR}")
-    if [[ -n "$new_webui_hash" && "$old_webui_hash" == "$new_webui_hash" ]]; then
-        log_info "WebUI 源码无变化（hash 一致），跳过编译"
+    # ===================== 按需重做：避免无谓的下载 =====================
+    # 1) WebUI：版本号一致就跳过部署（同 tag 的预编译产物字节级相同）
+    if [[ "$old_ver" == "$new_ver" && -x "${BIN_DIR}/webui" && -d "${WWW_DIR}" ]]; then
+        log_info "WebUI 版本无变化，跳过部署"
     else
-        log_info "WebUI 源码有变化，开始重新编译"
-        install_build_toolchain
-        build_webui
-        # 编译成功后记录新哈希
-        echo "$new_webui_hash" > "${INSTALL_DIR}/.webui-hash"
+        deploy_webui
     fi
+    # 清理旧版升级遗留下来的 .webui-hash（无害但无用）
+    rm -f "${INSTALL_DIR}/.webui-hash"
 
     # 2) mosdns：已存在二进制就跳过下载（首次升级或文件丢失才下）
     if [[ -x "${BIN_DIR}/mosdns" ]]; then
@@ -701,10 +649,8 @@ action_upgrade() {
     restart_service xray
     restart_service tproxy-gw-webui
 
-    # 只在装过编译工具时才卸载（如果跳过了编译就不需要卸载）
-    if [[ -n "$new_webui_hash" && "$old_webui_hash" != "$new_webui_hash" ]]; then
-        remove_build_toolchain
-    fi
+    # 清理旧版升级遗留的 Go/Node 工具链
+    remove_legacy_build_toolchain
     prune_backups 5
 
     log_done "升级完成（${old_ver} → ${new_ver}）"

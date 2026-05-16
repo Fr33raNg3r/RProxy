@@ -68,7 +68,17 @@ notes_file="$(mktemp)"
   fi
 } > "$notes_file"
 
-gh release create "$tag" \
-  --title "${component^} ${version}" \
-  --notes-file "$notes_file" \
-  --target main
+# client 组件：附带预编译产物（由 build-client-artifact.sh 产出）。
+# server 组件：只发 tag + 源码 tarball（GitHub 自动附带）。
+release_args=("$tag" --title "${component^} ${version}" --notes-file "$notes_file" --target main)
+if [[ "$component" == "client" ]]; then
+  artifact="dist/client-v${version}-linux-amd64.tar.gz"
+  if [[ -f "$artifact" ]]; then
+    release_args+=("$artifact")
+  else
+    echo "ERR: 找不到预编译产物 $artifact —— build 步骤是否漏跑？"
+    exit 1
+  fi
+fi
+
+gh release create "${release_args[@]}"

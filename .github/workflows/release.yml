@@ -32,7 +32,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # 用 GITHUB_TOKEN 推 tag 需要带 persist-credentials（默认即 true）
 
       - name: Determine which components changed
         id: detect
@@ -53,7 +52,6 @@ jobs:
             # push 事件：对比 before..after 看哪个 VERSION 文件变了
             base="${{ github.event.before }}"
             head="${{ github.sha }}"
-            # 如果 base 是全零（强推或首次 push），用 HEAD~1 作为基准
             if [[ "$base" == "0000000000000000000000000000000000000000" ]]; then
               base=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
             fi
@@ -67,12 +65,33 @@ jobs:
           echo "server_changed=$server_changed" >> "$GITHUB_OUTPUT"
           echo "==> client_changed=$client_changed  server_changed=$server_changed"
 
+      # ---------- client：先编译再发布 ----------
+      - name: Setup Go (for client build)
+        if: steps.detect.outputs.client_changed == '1'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client/webui-backend/go.mod
+          cache-dependency-path: client/webui-backend/go.sum
+
+      - name: Setup Node.js (for client build)
+        if: steps.detect.outputs.client_changed == '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: client/webui-frontend/package-lock.json
+
+      - name: Build client artifact
+        if: steps.detect.outputs.client_changed == '1'
+        run: bash .github/workflows/scripts/build-client-artifact.sh "$(tr -d '[:space:]' < client/VERSION)"
+
       - name: Release client
         if: steps.detect.outputs.client_changed == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/workflows/scripts/make-release.sh client
 
+      # ---------- server：仅打 tag + 源码 release（无需编译） ----------
       - name: Release server
         if: steps.detect.outputs.server_changed == '1'
         env:

@@ -169,29 +169,6 @@ download_or_die() {
     fi
 }
 
-# ---------- 升级时的"按需重做"工具 ----------
-# 给定一个源码目录（如 BUILD_DIR），算出 WebUI 相关文件的哈希
-# 用来判断是否需要重新编译。如果不需要，避免安装编译工具链（200MB+）
-# 哈希范围：所有 .go / .vue / .js / .ts / .json / .css / .html 文件
-# 排除：node_modules / dist / vendor 等目录
-compute_webui_hash() {
-    local src_dir="$1"
-    if [[ ! -d "$src_dir" ]]; then
-        echo ""
-        return
-    fi
-    # 排除常见构建产物目录
-    find "$src_dir/webui-backend" "$src_dir/webui-frontend" \
-        -type d \( -name node_modules -o -name dist -o -name vendor -o -name .git \) -prune -o \
-        -type f \( -name "*.go" -o -name "*.vue" -o -name "*.js" -o -name "*.ts" \
-                -o -name "*.json" -o -name "*.css" -o -name "*.html" \
-                -o -name "go.mod" -o -name "go.sum" \) -print 2>/dev/null \
-        | sort \
-        | xargs sha256sum 2>/dev/null \
-        | sha256sum \
-        | cut -d' ' -f1
-}
-
 # ---------- 服务管理 ----------
 restart_service() {
     local service="$1"
