@@ -194,35 +194,20 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 	}
 }
 
-// 路由规则：
-// - 局域网 IP 直连
-// - geoip:cn 直连（兜底，正常情况下国内 IP 已经在 nftables 层就绕过 Xray 了）
-// - geosite:cn 直连
-// - geosite:geolocation-!cn 走代理
-// - 其余走代理
+// 路由规则（v1.1.1 起简化）：
+// 信任 nftables 的分流决策——能到达 Xray 的流量都应该走代理。
+// nftables 已经在前面完成了所有分流：国内 IP / 白名单 IP / 私网都不会到达 Xray。
+// 因此 Xray 内部不再做 geoip:cn / geosite 二次判断——避免和 nftables 决策冲突
+// （特别是黑名单：nftables 把它送进 Xray 想强制走代理，Xray 又用 geoip 判断为 cn 直连——翻案了 nftables 的决定）。
+//
+// 仅保留 geoip:private 作为最后的安全兜底——万一某种异常路径让私网包到了 Xray，避免代理私网。
 func buildRoutingWithProxy() map[string]interface{} {
 	return map[string]interface{}{
-		"domainStrategy": "IPIfNonMatch",
 		"rules": []interface{}{
 			map[string]interface{}{
 				"type":        "field",
 				"ip":          []string{"geoip:private"},
 				"outboundTag": "direct",
-			},
-			map[string]interface{}{
-				"type":        "field",
-				"ip":          []string{"geoip:cn"},
-				"outboundTag": "direct",
-			},
-			map[string]interface{}{
-				"type":        "field",
-				"domain":      []string{"geosite:cn", "geosite:private"},
-				"outboundTag": "direct",
-			},
-			map[string]interface{}{
-				"type":        "field",
-				"domain":      []string{"geosite:geolocation-!cn"},
-				"outboundTag": "proxy",
 			},
 			map[string]interface{}{
 				"type":        "field",
