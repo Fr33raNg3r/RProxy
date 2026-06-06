@@ -1,0 +1,7 @@
+[Unit]
+Description=TProxy Health Check & Failover
+After=tproxy-gw-webui.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/tproxy-gw/scripts/watchdog.sh

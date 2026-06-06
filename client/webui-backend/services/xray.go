@@ -1,0 +1,371 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
+)
+
+// RenderXrayConfig 根据节点池和当前节点 ID 生成 Xray 配置文件
+// 如果 currentNodeID 为空，生成一个最小可用配置（无代理出站）
+func RenderXrayConfig(nodes []config.Node, currentNodeID string) error {
+	cfg := buildXrayBaseConfig()
+
+	// 找到当前节点
+	var current *config.Node
+	if currentNodeID != "" {
+		for i := range nodes {
+			if nodes[i].ID == currentNodeID {
+				current = &nodes[i]
+				break
+			}
+		}
+	}
+
+	if current != nil {
+		// 加入 proxy 出站
+		proxyOut := buildProxyOutbound(current)
+		// 把 proxy 放最前
+		cfg["outbounds"] = append([]interface{}{proxyOut}, cfg["outbounds"].([]interface{})...)
+		// 加入完整路由规则
+		cfg["routing"] = buildRoutingWithProxy()
+	} else {
+		// 没有可用节点：所有流量直连
+		cfg["routing"] = buildRoutingDirectOnly()
+	}
+
+	if err := os.MkdirAll(config.XrayConfDir, 0755); err != nil {
+		return err
+	}
+
+	tmp := config.XrayConfPath + ".tmp"
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+
+	// 验证配置语法（用 -format=json 显式指定）
+	if out, err := exec.Command("xray", "run", "-test", "-format=json", "-c", tmp).CombinedOutput(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("xray 配置验证失败: %s\n%s", err, string(out))
+	}
+
+	return os.Rename(tmp, config.XrayConfPath)
+}
+
+func buildXrayBaseConfig() map[string]interface{} {
+	return map[string]interface{}{
+		"log": map[string]interface{}{
+			"loglevel": "warning",
+			// 写到 /var/log/xray/，这个目录由 Xray 官方安装脚本创建，nobody 有写权限
+			"access": "/var/log/xray/access.log",
+			"error":  "/var/log/xray/error.log",
+		},
+		"inbounds": []interface{}{
+			// TPROXY 入口
+			map[string]interface{}{
+				"tag":      "tproxy-in",
+				"port":     12345,
+				"protocol": "dokodemo-door",
+				"settings": map[string]interface{}{
+					"network":        "tcp,udp",
+					"followRedirect": true,
+				},
+				"streamSettings": map[string]interface{}{
+					"sockopt": map[string]interface{}{
+						"tproxy": "tproxy",
+						"mark":   255,
+					},
+				},
+				"sniffing": map[string]interface{}{
+					"enabled":      true,
+					"destOverride": []string{"http", "tls", "quic"},
+					"routeOnly":    true,
+				},
+			},
+			// SOCKS 内部端口（watchdog 健康检查走这里）
+			map[string]interface{}{
+				"tag":      "socks-in",
+				"port":     config.XraySocksPort,
+				"listen":   "127.0.0.1",
+				"protocol": "socks",
+				"settings": map[string]interface{}{
+					"auth": "noauth",
+					"udp":  true,
+				},
+				"sniffing": map[string]interface{}{
+					"enabled":      true,
+					"destOverride": []string{"http", "tls", "quic"},
+					"routeOnly":    true,
+				},
+			},
+		},
+		"outbounds": []interface{}{
+			map[string]interface{}{
+				"tag":      "direct",
+				"protocol": "freedom",
+				"settings": map[string]interface{}{
+					"domainStrategy": "UseIP",
+				},
+				"streamSettings": map[string]interface{}{
+					"sockopt": map[string]interface{}{"mark": 255},
+				},
+			},
+			map[string]interface{}{
+				"tag":      "block",
+				"protocol": "blackhole",
+			},
+		},
+		"policy": map[string]interface{}{
+			"levels": map[string]interface{}{
+				"0": map[string]interface{}{
+					"handshake":    4,
+					"connIdle":     300,
+					"uplinkOnly":   1,
+					"downlinkOnly": 1,
+				},
+			},
+		},
+	}
+}
+
+// buildProxyOutbound: VMess + WebSocket + TLS
+// 服务端架构：客户端 → TLS+VMess+WS → Nginx (TLS 终结) → Xray (VMess WS) → 出网
+// 所以客户端的 streamSettings.security = "tls"，network = "ws"
+func buildProxyOutbound(n *config.Node) map[string]interface{} {
+	host := n.Host
+	if host == "" {
+		host = n.Address // 默认与 address 相同
+	}
+	security := n.Security
+	if security == "" {
+		security = "auto"
+	}
+	wsPath := n.WSPath
+	if wsPath == "" {
+		wsPath = "/"
+	}
+
+	// 把 VPS 域名解析为 IP——避免 Xray 启动时依赖 mosdns
+	// 这是消除"Xray <-> mosdns 循环依赖"的关键
+	// 如果 n.Address 已经是 IP（如 1.2.3.4），net.LookupHost 会原样返回
+	// 如果解析失败（如初次部署 VPS 尚未生效），保留原域名让 Xray 自己尝试
+	address := resolveAddress(n.Address)
+
+	return map[string]interface{}{
+		"tag":      "proxy",
+		"protocol": "vmess",
+		"settings": map[string]interface{}{
+			"vnext": []interface{}{
+				map[string]interface{}{
+					"address": address, // 优先用解析后的 IP，避免循环依赖
+					"port":    n.Port,
+					"users": []interface{}{
+						map[string]interface{}{
+							"id":       n.UUID,
+							"alterId":  n.AlterID,
+							"security": security,
+						},
+					},
+				},
+			},
+		},
+		"streamSettings": map[string]interface{}{
+			"network":  "ws",
+			"security": "tls",
+			"wsSettings": map[string]interface{}{
+				"path": wsPath,
+				"headers": map[string]interface{}{
+					"Host": host, // 保留域名作为 WS Host header
+				},
+			},
+			"tlsSettings": map[string]interface{}{
+				"serverName":    host, // 保留域名作为 TLS SNI
+				"allowInsecure": false,
+				"alpn":          []string{"h2", "http/1.1"},
+			},
+			"sockopt": map[string]interface{}{
+				"mark":        255,
+				"tcpFastOpen": true,
+			},
+		},
+	}
+}
+
+// resolveAddress 把域名解析为 IPv4 地址
+// 如果输入已经是 IP 或解析失败，返回原值
+// 用于在 Xray 配置生成时预解析 VPS 域名，避免运行时依赖 mosdns
+func resolveAddress(addr string) string {
+	// 如果已经是 IPv4，直接返回
+	if net.ParseIP(addr) != nil {
+		return addr
+	}
+	// 用国内 DNS 直接解析（不走系统 resolv.conf，避免循环依赖）
+	// 用一个 Resolver 显式指定上游
+	r := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "udp", "223.5.5.5:53") // 阿里 DNS（不需要走代理）
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := r.LookupHost(ctx, addr)
+	if err != nil || len(ips) == 0 {
+		// 解析失败：保留域名让 Xray 自己尝试（旧行为）
+		return addr
+	}
+	// 优先返回 IPv4
+	for _, ip := range ips {
+		if net.ParseIP(ip) != nil && !strings.Contains(ip, ":") {
+			return ip
+		}
+	}
+	return ips[0]
+}
+
+// 路由规则（v1.1.1 起简化）：
+// 信任 nftables 的分流决策——能到达 Xray 的流量都应该走代理。
+// nftables 已经在前面完成了所有分流：国内 IP / 白名单 IP / 私网都不会到达 Xray。
+// 因此 Xray 内部不再做 geoip:cn / geosite 二次判断——避免和 nftables 决策冲突
+// （特别是黑名单：nftables 把它送进 Xray 想强制走代理，Xray 又用 geoip 判断为 cn 直连——翻案了 nftables 的决定）。
+//
+// 仅保留 geoip:private 作为最后的安全兜底——万一某种异常路径让私网包到了 Xray，避免代理私网。
+func buildRoutingWithProxy() map[string]interface{} {
+	return map[string]interface{}{
+		"rules": []interface{}{
+			map[string]interface{}{
+				"type":        "field",
+				"ip":          []string{"geoip:private"},
+				"outboundTag": "direct",
+			},
+			map[string]interface{}{
+				"type":        "field",
+				"network":     "tcp,udp",
+				"outboundTag": "proxy",
+			},
+		},
+	}
+}
+
+func buildRoutingDirectOnly() map[string]interface{} {
+	return map[string]interface{}{
+		"rules": []interface{}{
+			map[string]interface{}{
+				"type":        "field",
+				"network":     "tcp,udp",
+				"outboundTag": "direct",
+			},
+		},
+	}
+}
+
+// SwitchToNextNode 故障转移：按 Order 切换到下一个节点
+// 所有节点都是候选；切换后 Enabled 字段跟随 CurrentNodeID 同步翻转
+func SwitchToNextNode() error {
+	cfg, err := config.LoadWebUIConfig()
+	if err != nil {
+		return err
+	}
+	nodes, err := config.LoadNodes()
+	if err != nil {
+		return err
+	}
+
+	if len(nodes) == 0 {
+		return errors.New("没有任何节点")
+	}
+
+	// 按 Order 排序的索引列表
+	sorted := make([]int, len(nodes))
+	for i := range nodes {
+		sorted[i] = i
+	}
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if nodes[sorted[i]].Order > nodes[sorted[j]].Order {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// 找当前位置
+	curIdx := -1
+	for i, idx := range sorted {
+		if nodes[idx].ID == cfg.CurrentNodeID {
+			curIdx = i
+			break
+		}
+	}
+	nextIdx := (curIdx + 1) % len(sorted)
+	if curIdx == -1 {
+		nextIdx = 0
+	}
+	nextID := nodes[sorted[nextIdx]].ID
+
+	// 同步 Enabled：只有 next 是 true
+	for i := range nodes {
+		nodes[i].Enabled = nodes[i].ID == nextID
+	}
+	if err := config.SaveNodes(nodes); err != nil {
+		return err
+	}
+
+	cfg.CurrentNodeID = nextID
+	if err := config.SaveWebUIConfig(cfg); err != nil {
+		return err
+	}
+	if err := RenderXrayConfig(nodes, cfg.CurrentNodeID); err != nil {
+		return err
+	}
+	return RestartXray()
+}
+
+// RestartXray 重启 Xray 服务，并验证 2 秒后仍在运行
+// systemctl restart 是异步的，命令返回 0 不代表 Xray 真的稳定运行
+// 这里等待 2 秒后用 systemctl is-active 验证，捕获崩溃情况
+func RestartXray() error {
+	if err := exec.Command("systemctl", "restart", "xray").Run(); err != nil {
+		return fmt.Errorf("systemctl restart 失败: %w", err)
+	}
+	// 等待 2 秒让 Xray 完成启动（或崩溃）
+	time.Sleep(2 * time.Second)
+	if !IsServiceActive("xray") {
+		// 取最近 20 行 Xray 日志返回给调用者
+		out, _ := exec.Command("journalctl", "-u", "xray", "-n", "20", "--no-pager").CombinedOutput()
+		return fmt.Errorf("Xray 启动后崩溃，最近日志:\n%s", string(out))
+	}
+	return nil
+}
+
+// TestNode 用 SOCKS 出站测试节点连通性，返回延迟
+func TestNode(socksPort int) (time.Duration, error) {
+	start := time.Now()
+	cmd := exec.Command("curl",
+		"-s", "-o", "/dev/null",
+		"-w", "%{http_code}",
+		"--max-time", "8",
+		"--socks5-hostname", fmt.Sprintf("127.0.0.1:%d", socksPort),
+		"https://www.google.com/generate_204",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	if string(out) != "204" {
+		return 0, fmt.Errorf("非预期响应: %s", string(out))
+	}
+	return time.Since(start), nil
+}

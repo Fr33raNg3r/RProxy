@@ -1,0 +1,6 @@
+.claude/
+CLAUDE.md
+
+# 前端构建产物 / 依赖
+client/webui-frontend/dist/
+client/webui-frontend/node_modules/

@@ -1,0 +1,25 @@
+[Unit]
+Description=TProxy mosdns DNS forwarder
+After=network.target nftables.service tproxy-gw-iproute.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/tproxy-gw/bin/mosdns start -d /opt/tproxy-gw/config/mosdns -c config.yaml
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60
+# 提升性能
+LimitNOFILE=65535
+# mosdns 需要操作 nftables set，必须以 root 运行
+User=root
+Group=root
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,48 @@
+name: Auto Release on VERSION bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 需要写权限来推 tag 和创建 Release
+
+# 让 JS actions（actions/checkout 等）使用 Node.js 24
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for changelog)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go (for client build)
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: client/webui-backend/go.mod
+          cache-dependency-path: client/webui-backend/go.sum
+
+      - name: Setup Node.js (for client build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: client/webui-frontend/package-lock.json
+
+      - name: Build client artifact (Go + Vue)
+        run: bash .github/workflows/scripts/build-client-artifact.sh "$(tr -d '[:space:]' < VERSION)"
+
+      - name: Build server artifact (pack only)
+        run: bash .github/workflows/scripts/build-server-artifact.sh "$(tr -d '[:space:]' < VERSION)"
+
+      - name: Create release (single tag, both artifacts)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/workflows/scripts/make-release.sh

@@ -1,0 +1,12 @@
+[Unit]
+Description=TProxy Daily Update Timer (04:00 daily)
+
+[Timer]
+# 固定北京时间，避免系统时区为 UTC 时偏移 8 小时
+OnCalendar=*-*-* 04:00:00 Asia/Shanghai
+RandomizedDelaySec=30m
+Persistent=true
+Unit=tproxy-gw-update.service
+
+[Install]
+WantedBy=timers.target

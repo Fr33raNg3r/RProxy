@@ -1,0 +1,12 @@
+[Unit]
+Description=RProxy Load static whitelist/blacklist IPs into nftables sets
+After=nftables.service tproxy-gw-iproute.service
+Requires=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/tproxy-gw/scripts/load-static-ips.sh
+
+[Install]
+WantedBy=multi-user.target

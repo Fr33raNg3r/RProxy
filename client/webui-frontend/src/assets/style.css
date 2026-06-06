@@ -1,0 +1,101 @@
+/* RProxy WebUI - global styles (Naive UI dark theme) */
+:root {
+  --font-mono: 'Fira Code', 'JetBrains Mono', Consolas, Monaco, monospace;
+  --bg-page: #0f172a;
+  --bg-sider: #111827;
+  --color-muted: rgba(255, 255, 255, 0.55);
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-page);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+}
+
+* { box-sizing: border-box; }
+
+.layout-root {
+  min-height: 100vh;
+  display: flex;
+}
+
+.app-main {
+  flex: 1;
+  padding: 24px 28px;
+  overflow: auto;
+  min-width: 0;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  gap: 12px;
+}
+.page-header h2,
+.page-header h3 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.card-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.text-mono { font-family: var(--font-mono); }
+.text-muted { color: var(--color-muted); }
+.text-sm { font-size: 12px; }
+.text-xs { font-size: 11px; }
+.break-all { word-break: break-all; }
+
+.log-output {
+  background: #0b1220;
+  color: #d6deeb;
+  padding: 14px 16px;
+  border-radius: 6px;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.kv-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.kv-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.kv-table tr:last-child td { border-bottom: none; }
+.kv-table td:first-child {
+  color: var(--color-muted);
+  white-space: nowrap;
+  width: 180px;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }

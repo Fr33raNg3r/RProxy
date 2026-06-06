@@ -1,0 +1,13 @@
+[Unit]
+Description=RProxy Load GeoIP-CN into nftables cn_ips set
+After=nftables.service tproxy-gw-iproute.service
+Requires=nftables.service
+ConditionPathExists=/opt/tproxy-gw/data/geo/geoip-cn.txt
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/tproxy-gw/scripts/load-cn-ips.sh
+
+[Install]
+WantedBy=multi-user.target
