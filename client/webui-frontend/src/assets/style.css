@@ -50,6 +50,22 @@ html, body, #app {
   gap: 16px;
 }
 
+/* 响应式卡片网格：宽屏自动多列并排，窄屏自动退回单列。
+   仅在明确需要并排的页面（如设置页）使用，长文本/表格类页面继续用 .card-stack 单列。 */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.card-full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 860px) {
+  .app-main { padding: 16px; }
+}
+
 .row-actions {
   display: flex;
   gap: 8px;

@@ -22,7 +22,8 @@ import { ref, onMounted, watch } from 'vue'
 import { api } from '../api'
 
 const componentOpts = [
-  { label: 'Xray', value: 'xray' },
+  { label: 'Xray - 错误日志', value: 'xray-error' },
+  { label: 'Xray - 连接记录', value: 'xray-access' },
   { label: 'mosdns', value: 'mosdns' },
   { label: 'WebUI', value: 'webui' },
   { label: '健康检查', value: 'watchdog' },
@@ -36,7 +37,7 @@ const lineOpts = [
   { label: '最近 2000 行', value: 2000 }
 ]
 
-const component = ref('xray')
+const component = ref('xray-error')
 const lines = ref(200)
 const content = ref('')
 const error = ref('')

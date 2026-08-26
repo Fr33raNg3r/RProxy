@@ -1,0 +1,17 @@
+# RProxy 客户端日志轮转配置
+# 由 install.sh 部署到 /etc/logrotate.d/tproxy-gw
+# mosdns.log 按 config.log.level=error 只记录错误，量不大；
+# xray access.log 会记录每一条透明代理连接，是日志增长最快的来源——用 maxsize 兜底防止单日暴涨。
+/opt/tproxy-gw/logs/mosdns.log
+/var/log/xray/access.log
+/var/log/xray/error.log
+{
+    daily
+    rotate 3
+    maxsize 20M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

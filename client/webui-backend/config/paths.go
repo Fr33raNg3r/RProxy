@@ -24,7 +24,10 @@ const (
 	DNSHostsPath        = "/opt/tproxy-gw/config/dns/hosts.txt"
 	DNSUpstreamsPath = "/opt/tproxy-gw/config/dns/upstreams.json"
 
-	MosdnsConfigPath = "/opt/tproxy-gw/config/mosdns/config.yaml"
+	MosdnsConfigPath  = "/opt/tproxy-gw/config/mosdns/config.yaml"
+	MosdnsLogPath     = "/opt/tproxy-gw/logs/mosdns.log"
+	XrayAccessLogPath = "/var/log/xray/access.log"
+	XrayErrorLogPath  = "/var/log/xray/error.log"
 
 	NftablesConfPath = "/etc/nftables.conf"
 

@@ -466,6 +466,9 @@ deploy_scripts_and_configs() {
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
     systemctl daemon-reload
 
+    # 部署日志轮转配置（限制 mosdns.log / xray access.log 等无限增长）
+    cp "${BUILD_DIR}/configs/logrotate/tproxy-gw" /etc/logrotate.d/tproxy-gw
+
     # 部署版本号
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
 
@@ -768,6 +771,7 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/nftables-tproxy.nft" /etc/nftables.conf
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
+    cp "${BUILD_DIR}/configs/logrotate/tproxy-gw" /etc/logrotate.d/tproxy-gw
     systemctl daemon-reload
 
     # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）

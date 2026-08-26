@@ -93,6 +93,34 @@ func JournalLog(unit string, lines int) (string, error) {
 	return string(out), nil
 }
 
+// TailFile 读取日志文件最后 N 行，最新的排在最前面（与 JournalLog 行为一致）。
+// 文件不存在时不算错误，返回提示文案（mosdns.log / xray 的 access.log、error.log
+// 首次启动或刚被 logrotate 轮转后可能暂时不存在）。
+func TailFile(path string, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 100
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "（日志文件不存在，可能尚未产生任何记录）", nil
+		}
+		return "", err
+	}
+	out, err := exec.Command("tail", "-n", strconv.Itoa(lines), path).Output()
+	if err != nil {
+		return "", err
+	}
+	text := strings.TrimRight(string(out), "\n")
+	if text == "" {
+		return "", nil
+	}
+	rows := strings.Split(text, "\n")
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+	return strings.Join(rows, "\n"), nil
+}
+
 // GetExternalIP 取本机外网 IP（用于 WG 客户端 endpoint）
 // 优先返回第一个非环回 IP；找不到则返回空字符串
 func GetExternalIP() string {

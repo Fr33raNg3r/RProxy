@@ -4,7 +4,7 @@
       <h2>WireGuard 入站</h2>
       <n-button type="primary"
                 :disabled="!wgEnabled"
-                :title="wgEnabled ? '' : '请先到【设置】启用 WireGuard 服务'"
+                :title="wgEnabled ? '' : '请先在下方启用 WireGuard 服务'"
                 @click="openCreate">
         + 添加 Peer
       </n-button>
@@ -14,13 +14,33 @@
     <n-alert v-if="success" type="success" closable style="margin-bottom: 12px;" @close="success = ''">{{ success }}</n-alert>
 
     <div class="card-stack">
-      <n-card v-if="!wgEnabled" size="medium" :bordered="true" style="border-color: rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.06);">
-        <template #header>⚠️ WireGuard 入站服务未启用</template>
-        <div class="text-muted" style="margin-bottom: 12px;">
-          要使用 WireGuard 让手机/电脑接入旁路由，请先到【设置】页启用 WireGuard 入站服务。<br>
-          启用后才能在此页面添加 peer。
+      <n-card size="medium">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span>WireGuard 入站服务</span>
+            <n-tag :type="wgEnabled ? 'success' : 'default'" size="small" round>
+              {{ wgEnabled ? '已启用' : '已禁用' }}
+            </n-tag>
+          </div>
+        </template>
+        <div class="text-muted text-sm" style="margin-bottom: 14px;">
+          启用后可在下方添加 peer，让手机/电脑通过 WireGuard 接入旁路由。禁用时所有 peer 配置仍会保留，再次启用立即可用。
         </div>
-        <n-button type="primary" @click="$router.push('/settings')">前往设置启用</n-button>
+        <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap;">
+          <n-button v-if="!wgEnabled" type="primary" :loading="wgToggling" @click="enableWG">
+            启用 WireGuard 服务
+          </n-button>
+          <n-button v-else type="error" :loading="wgToggling" @click="disableWG">
+            禁用 WireGuard 服务
+          </n-button>
+          <div>
+            <div class="text-muted text-xs" style="margin-bottom: 6px;">监听端口</div>
+            <n-input-group>
+              <n-input-number v-model:value="wgPort" :min="1" :max="65535" style="width: 140px;" />
+              <n-button :loading="savingPort" @click="savePort">保存</n-button>
+            </n-input-group>
+          </div>
+        </div>
       </n-card>
 
       <n-card size="medium">
@@ -34,7 +54,6 @@
         </template>
         <table class="kv-table">
           <tbody>
-            <tr><td>监听端口</td><td class="text-mono">{{ listenPort }}</td></tr>
             <tr><td>子网</td><td class="text-mono">{{ subnet }}</td></tr>
             <tr><td>服务端公钥</td><td class="text-mono text-sm break-all">{{ serverPublicKey }}</td></tr>
           </tbody>
@@ -148,7 +167,9 @@ const message = useMessage()
 const peers = ref([])
 const wgEnabled = ref(false)
 const wgActive = ref(false)
-const listenPort = ref('')
+const wgToggling = ref(false)
+const wgPort = ref(51820)
+const savingPort = ref(false)
 const subnet = ref('')
 const serverPublicKey = ref('')
 const error = ref('')
@@ -232,7 +253,7 @@ async function load() {
     peers.value = data.peers || []
     wgEnabled.value = !!data.wg_enabled
     wgActive.value = data.wg_active
-    listenPort.value = data.wg_listen_port
+    wgPort.value = data.wg_listen_port
     subnet.value = data.wg_subnet
     serverPublicKey.value = data.server_public_key
     if (data.wg_endpoint !== undefined && data.wg_endpoint !== null) {
@@ -240,6 +261,59 @@ async function load() {
     }
   } catch (e) {
     error.value = e.message
+  }
+}
+
+async function enableWG() {
+  wgToggling.value = true
+  error.value = ''
+  try {
+    const r = await api.enableWG()
+    success.value = r.message || 'WireGuard 服务已启动'
+    wgEnabled.value = true
+    setTimeout(() => success.value = '', 3000)
+    await load()
+  } catch (e) {
+    error.value = '启动失败：' + e.message
+  } finally {
+    wgToggling.value = false
+  }
+}
+
+function disableWG() {
+  dialog.warning({
+    title: '禁用 WireGuard',
+    content: '确定禁用 WireGuard 入站服务？所有 peer 配置会保留，再次启用立即可用。',
+    positiveText: '禁用',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      wgToggling.value = true
+      error.value = ''
+      try {
+        const r = await api.disableWG()
+        success.value = r.message || 'WireGuard 服务已停止'
+        wgEnabled.value = false
+        setTimeout(() => success.value = '', 3000)
+      } catch (e) {
+        error.value = '停止失败：' + e.message
+      } finally {
+        wgToggling.value = false
+      }
+    }
+  })
+}
+
+async function savePort() {
+  savingPort.value = true
+  error.value = ''
+  try {
+    await api.updateSettings({ wg_listen_port: wgPort.value })
+    success.value = '监听端口已保存'
+    setTimeout(() => success.value = '', 3000)
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    savingPort.value = false
   }
 }
 

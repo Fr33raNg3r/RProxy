@@ -48,6 +48,14 @@ log_to_file() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${logfile}"
 }
 
+# 清理超过 N 天的按日期命名的日志文件（log_to_file 产生的 YYYYMMDD.log）
+prune_logs() {
+    local keep_days="${1:-14}"
+    if [[ -d "${LOG_DIR}" ]]; then
+        find "${LOG_DIR}" -maxdepth 1 -name '*.log' -mtime "+${keep_days}" -delete 2>/dev/null || true
+    fi
+}
+
 die() { log_error "$*"; exit 1; }
 
 # ---------- 交互输入（兼容 wget|bash 管道执行） ----------

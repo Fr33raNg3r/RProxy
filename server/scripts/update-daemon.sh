@@ -113,5 +113,6 @@ fi
 
 update_xray
 renew_cert
+prune_logs
 
 log_to_file "================ 更新完成 ================"

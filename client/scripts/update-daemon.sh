@@ -151,5 +151,6 @@ fi
 
 update_xray
 update_geo_data
+prune_logs
 
 log_to_file "================ 更新完成 ================"

@@ -38,8 +38,8 @@ async function request(url, options = {}) {
 
 export const api = {
   // 认证
-  login(username, password) {
-    return request('/api/login', { method: 'POST', body: { username, password } })
+  login(username, password, remember = false) {
+    return request('/api/login', { method: 'POST', body: { username, password, remember } })
   },
   logout() {
     return request('/api/logout', { method: 'POST' })

@@ -13,7 +13,8 @@
             <n-input v-model:value="password" type="password" show-password-on="click" @keyup.enter="login" />
           </n-form-item>
         </n-form>
-        <n-button type="primary" block :loading="loading" style="margin-top: 18px;" @click="login">登录</n-button>
+        <n-checkbox v-model:checked="remember" style="margin-top: 4px;">记住我（30 天内免登录）</n-checkbox>
+        <n-button type="primary" block :loading="loading" style="margin-top: 14px;" @click="login">登录</n-button>
       </template>
 
       <template v-else>
@@ -43,6 +44,7 @@ import { api } from '../api'
 const router = useRouter()
 const username = ref('admin')
 const password = ref('')
+const remember = ref(false)
 const newPwd = ref('')
 const newPwd2 = ref('')
 const error = ref('')
@@ -57,7 +59,7 @@ async function login() {
   error.value = ''
   loading.value = true
   try {
-    const r = await api.login(username.value, password.value)
+    const r = await api.login(username.value, password.value, remember.value)
     if (r.must_change_password) {
       forceChange.value = true
     } else {

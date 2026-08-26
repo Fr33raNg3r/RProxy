@@ -7,36 +7,13 @@
     <n-alert v-if="error" type="error" closable style="margin-bottom: 12px;" @close="error = ''">{{ error }}</n-alert>
     <n-alert v-if="success" type="success" closable style="margin-bottom: 12px;" @close="success = ''">{{ success }}</n-alert>
 
-    <div class="card-stack">
-      <n-card title="WireGuard 入站服务" size="medium">
-        <div class="text-muted" style="margin-bottom: 14px;">
-          启用后，可在【WireGuard】页面添加 peer，让手机/电脑通过 WireGuard 接入旁路由。<br>
-          禁用时所有 peer 配置仍会保留，再次启用立即可用。
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <n-tag :type="settings.wg_enabled ? 'success' : 'default'" size="medium" round>
-            {{ settings.wg_enabled ? '已启用' : '已禁用' }}
-          </n-tag>
-          <n-button v-if="!settings.wg_enabled" type="primary" :loading="wgToggling" @click="enableWG">
-            启用 WireGuard 服务
-          </n-button>
-          <n-button v-else type="error" :loading="wgToggling" @click="disableWG">
-            禁用 WireGuard 服务
-          </n-button>
-        </div>
-      </n-card>
-
+    <div class="card-grid">
       <n-card title="基础设置" size="medium">
         <n-form label-placement="top" :show-feedback="false">
           <n-form-item label="WebUI 监听端口">
             <n-input-number v-model:value="settings.listen_port" :min="1" :max="65535" style="width: 180px;" />
           </n-form-item>
           <div class="text-muted text-xs" style="margin: -4px 0 12px;">修改后将自动重启 WebUI 服务，需用新端口重新访问</div>
-
-          <n-form-item label="WireGuard 监听端口">
-            <n-input-number v-model:value="settings.wg_listen_port" :min="1" :max="65535" style="width: 180px;" />
-          </n-form-item>
-          <div class="text-muted text-xs" style="margin: -4px 0 12px;">修改后将自动重启 WG 服务</div>
 
           <n-form-item label="每日更新时间（北京时间）">
             <div style="display: flex; align-items: center; gap: 6px;">
@@ -98,7 +75,7 @@
         <n-alert v-if="importResult" type="success" :show-icon="false" style="margin-top: 14px;">{{ importResult }}</n-alert>
       </n-card>
 
-      <n-card size="medium">
+      <n-card size="medium" class="card-full">
         <template #header>
           <span style="color: #f87171;">紧急停止 / 恢复透明代理</span>
         </template>
@@ -125,8 +102,6 @@ const dialog = useDialog()
 
 const settings = ref({
   listen_port: 80,
-  wg_enabled: false,
-  wg_listen_port: 51820,
   update_hour: 4,
   update_minute: 0
 })
@@ -139,7 +114,6 @@ const error = ref('')
 const success = ref('')
 const saving = ref(false)
 const savingLan = ref(false)
-const wgToggling = ref(false)
 
 const oldPwd = ref('')
 const newPwd = ref('')
@@ -196,8 +170,6 @@ async function load() {
     const data = await api.getSettings()
     settings.value = {
       listen_port: data.listen_port,
-      wg_enabled: !!data.wg_enabled,
-      wg_listen_port: data.wg_listen_port,
       update_hour: data.update_hour,
       update_minute: data.update_minute
     }
@@ -235,44 +207,6 @@ function saveLan() {
         error.value = e.message
       } finally {
         savingLan.value = false
-      }
-    }
-  })
-}
-
-async function enableWG() {
-  wgToggling.value = true
-  error.value = ''
-  try {
-    const r = await api.enableWG()
-    success.value = r.message || 'WireGuard 服务已启动'
-    settings.value.wg_enabled = true
-    setTimeout(() => success.value = '', 3000)
-  } catch (e) {
-    error.value = '启动失败：' + e.message
-  } finally {
-    wgToggling.value = false
-  }
-}
-
-function disableWG() {
-  dialog.warning({
-    title: '禁用 WireGuard',
-    content: '确定禁用 WireGuard 入站服务？所有 peer 配置会保留，再次启用立即可用。',
-    positiveText: '禁用',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      wgToggling.value = true
-      error.value = ''
-      try {
-        const r = await api.disableWG()
-        success.value = r.message || 'WireGuard 服务已停止'
-        settings.value.wg_enabled = false
-        setTimeout(() => success.value = '', 3000)
-      } catch (e) {
-        error.value = '停止失败：' + e.message
-      } finally {
-        wgToggling.value = false
       }
     }
   })

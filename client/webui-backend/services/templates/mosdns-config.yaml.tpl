@@ -4,7 +4,7 @@
 # ============================================================================
 
 log:
-  level: info
+  level: error
   file: "/opt/tproxy-gw/logs/mosdns.log"
 
 api:

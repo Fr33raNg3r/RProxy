@@ -1,6 +1,7 @@
 <template>
   <div class="layout-root">
-    <aside class="sider">
+    <div v-if="mobileMenuOpen" class="sider-backdrop" @click="mobileMenuOpen = false"></div>
+    <aside class="sider" :class="{ open: mobileMenuOpen }">
       <div class="brand">
         <div class="brand-title">RProxy</div>
         <div v-if="version.current" class="brand-version">v{{ version.current }}</div>
@@ -30,6 +31,7 @@
     </aside>
 
     <main class="app-main">
+      <button class="menu-toggle" @click="mobileMenuOpen = true" aria-label="打开菜单">☰</button>
       <n-alert
         v-if="xrayAlert.active"
         type="error"
@@ -89,6 +91,7 @@ const route = useRoute()
 const dialog = useDialog()
 const message = useMessage()
 
+const mobileMenuOpen = ref(false)
 const version = ref({ current: '', latest: '', has_update: false })
 const xrayAlert = ref({ active: false, time: '', message: '' })
 const upgrading = ref(false)
@@ -117,6 +120,7 @@ const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'status'))
 
 function onSelect(key) {
   router.push(key)
+  mobileMenuOpen.value = false
 }
 
 async function loadVersion() {
@@ -306,5 +310,49 @@ onUnmounted(() => {
 .sider-footer {
   padding: 16px 18px;
   margin-top: auto;
+}
+
+.menu-toggle {
+  display: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--bg-sider);
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  margin-bottom: 14px;
+}
+.sider-backdrop {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .sider {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 24px rgba(0, 0, 0, 0.4);
+  }
+  .sider.open {
+    transform: translateX(0);
+  }
+  .sider-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 99;
+  }
 }
 </style>
