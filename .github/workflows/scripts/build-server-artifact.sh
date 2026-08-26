@@ -34,7 +34,9 @@ EOF
 
 mkdir -p dist
 echo "==> 打包 ${artifact}"
-tar -C "$staging" -czf "dist/${artifact}" .
+
+# --mode=755: 见 build-client-artifact.sh 里的说明（NTFS 不保存 Unix 可执行位）。
+tar -C "$staging" --mode=755 -czf "dist/${artifact}" .
 ls -lh "dist/${artifact}"
 
 echo "==> 完成。产物路径: dist/${artifact}"

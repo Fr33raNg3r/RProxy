@@ -66,7 +66,11 @@ EOF
 # ---------- 4) 打包 ----------
 mkdir -p dist
 echo "==> 打包 ${artifact}"
-tar -C "$staging" -czf "dist/${artifact}" .
+
+# --mode=755: NTFS 不保存 Unix 可执行位，在 Windows 本地打包时 bin/webui 等文件
+# 会被记成 644，导致 install.sh 的 `-x bin/webui` 校验失败（"包可能损坏"）。
+# 强制写入 755 对 Linux CI 打包无影响（本来就是 755）。
+tar -C "$staging" --mode=755 -czf "dist/${artifact}" .
 ls -lh "dist/${artifact}"
 
 echo "==> 完成。产物路径: dist/${artifact}"

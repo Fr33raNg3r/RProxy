@@ -4,3 +4,6 @@ CLAUDE.md
 # 前端构建产物 / 依赖
 client/webui-frontend/dist/
 client/webui-frontend/node_modules/
+
+# 本地打包 release 产物（build-*-artifact.sh 的输出）
+/dist/
