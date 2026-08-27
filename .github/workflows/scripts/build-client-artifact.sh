@@ -63,7 +63,28 @@ go_version: $(go version)
 node_version: $(node --version)
 EOF
 
-# ---------- 4) 打包 ----------
+# ---------- 4) 校验换行符 ----------
+# CRLF 会让 Debian 上的 `#!/bin/bash^M` 找不到解释器，脚本静默失败。
+# 1.3.0 就因此让 load-cn-ips.sh 无法执行 → cn_ips 集合为空 → 国内流量误走代理。
+# 仓库根的 .gitattributes 已强制 LF，这里是打包前的最后一道防线。
+# 注意：必须用 tr 逐文件查字节。Git Bash(MSYS) 的 grep/awk 以文本模式读文件，
+# 会把 CR 透明吃掉，根本检测不到 CRLF；$'\r' 在这里也可能展开成空字符串。
+echo "==> 校验换行符（不允许 CRLF）"
+crlf=""
+while IFS= read -r f; do
+    if [ "$(tr -cd '\r' < "$f" | wc -c)" -gt 0 ]; then
+        crlf="${crlf}${f}
+"
+    fi
+done < <(find "${staging}/scripts" "${staging}/configs" "${staging}/install.sh" -type f)
+if [ -n "$crlf" ]; then
+    echo "ERR: 以下文件含 CRLF 换行符，打包中止：" >&2
+    printf '%s' "$crlf" >&2
+    echo "修复: 确认 .gitattributes 生效后重新检出，或用 tr -d '\\r' 处理这些文件" >&2
+    exit 2
+fi
+
+# ---------- 5) 打包 ----------
 mkdir -p dist
 echo "==> 打包 ${artifact}"
 

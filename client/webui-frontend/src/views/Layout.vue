@@ -109,7 +109,6 @@ let preUpgradeVersion = ''
 
 const menuOptions = [
   { label: '系统状态', key: '/status' },
-  { label: '节点管理', key: '/nodes' },
   { label: 'WireGuard', key: '/wireguard' },
   { label: 'DNS 规则', key: '/dns' },
   { label: '设置', key: '/settings' },

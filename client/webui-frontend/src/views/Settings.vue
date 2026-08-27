@@ -24,7 +24,23 @@
             </div>
           </n-form-item>
         </n-form>
-        <n-button type="primary" :loading="saving" style="margin-top: 16px;" @click="saveSettings">保存设置</n-button>
+        <n-button type="primary" :loading="saving" style="margin-top: 4px;" @click="saveSettings">保存设置</n-button>
+
+        <n-divider />
+
+        <div style="font-weight: 600; margin-bottom: 12px;">修改密码</div>
+        <n-form label-placement="top" :show-feedback="false">
+          <n-form-item label="旧密码">
+            <n-input v-model:value="oldPwd" type="password" show-password-on="click" />
+          </n-form-item>
+          <n-form-item label="新密码（至少 6 位）">
+            <n-input v-model:value="newPwd" type="password" show-password-on="click" />
+          </n-form-item>
+          <n-form-item label="再次输入新密码">
+            <n-input v-model:value="confirmPwd" type="password" show-password-on="click" />
+          </n-form-item>
+        </n-form>
+        <n-button type="primary" :loading="changingPwd" style="margin-top: 4px;" @click="changePwd">修改密码</n-button>
       </n-card>
 
       <n-card title="本机网络（IP / 网关）" size="medium">
@@ -47,22 +63,7 @@
         <n-button type="warning" :loading="savingLan" style="margin-top: 16px;" @click="saveLan">保存并应用网络配置</n-button>
       </n-card>
 
-      <n-card title="修改密码" size="medium">
-        <n-form label-placement="top" :show-feedback="false">
-          <n-form-item label="旧密码">
-            <n-input v-model:value="oldPwd" type="password" show-password-on="click" />
-          </n-form-item>
-          <n-form-item label="新密码（至少 6 位）">
-            <n-input v-model:value="newPwd" type="password" show-password-on="click" />
-          </n-form-item>
-          <n-form-item label="再次输入新密码">
-            <n-input v-model:value="confirmPwd" type="password" show-password-on="click" />
-          </n-form-item>
-        </n-form>
-        <n-button type="primary" :loading="changingPwd" style="margin-top: 12px;" @click="changePwd">修改密码</n-button>
-      </n-card>
-
-      <n-card title="配置导入/导出" size="medium">
+      <n-card title="配置导入/导出与紧急操作" size="medium" class="card-full">
         <div class="text-muted" style="margin-bottom: 14px;">
           导出节点池、DNS 上游、基础设置为 YAML 文件。<br>
           导入会替换上述配置并重启 Xray/mosdns。<strong>不包含密码、session 等敏感字段。</strong>
@@ -73,12 +74,10 @@
           <input ref="cfgFile" type="file" accept=".yaml,.yml,text/yaml" style="display:none" @change="onImportFile" />
         </div>
         <n-alert v-if="importResult" type="success" :show-icon="false" style="margin-top: 14px;">{{ importResult }}</n-alert>
-      </n-card>
 
-      <n-card size="medium" class="card-full">
-        <template #header>
-          <span style="color: #f87171;">紧急停止 / 恢复透明代理</span>
-        </template>
+        <n-divider />
+
+        <div style="color: #f87171; font-weight: 600; margin-bottom: 12px;">紧急停止 / 恢复透明代理</div>
         <div class="text-muted" style="margin-bottom: 14px;">
           分流故障时点「紧急停止」清空规则恢复直连；恢复后点「恢复透明代理」重新启用。<br>
           对应脚本：<code>/opt/tproxy-gw/scripts/emergency-stop.sh</code> / <code>emergency-resume.sh</code>

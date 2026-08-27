@@ -8,7 +8,6 @@ const routes = [
     children: [
       { path: '', redirect: '/status' },
       { path: 'status',    component: () => import('./views/Status.vue') },
-      { path: 'nodes',     component: () => import('./views/Nodes.vue') },
       { path: 'wireguard', component: () => import('./views/WireGuard.vue') },
       { path: 'dns',       component: () => import('./views/DNS.vue') },
       { path: 'settings',  component: () => import('./views/Settings.vue') },
