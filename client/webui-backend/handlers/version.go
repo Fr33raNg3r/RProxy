@@ -28,6 +28,9 @@ const (
 	// 之前一段时间用过 client-v* 分组件 tag，保留作为兼容前缀以便老 WebUI 升级期间能识别。
 	releaseTagPrefix       = "v"
 	releaseTagPrefixLegacy = "client-v"
+	// TriggerUpgrade 每次都先拉一份新鲜的 install.sh 覆盖本地缓存副本，
+	// 避免本地那份自己出问题（如某次升级留下语法错误）后"一键升级"永远卡死。
+	installScriptRawURL = "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/client/install.sh"
 )
 
 // InitVersionCheck WebUI 启动时调用一次
@@ -288,10 +291,17 @@ func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	// 所有子进程一起杀掉。setsid/nohup 只改会话/进程组，改不了 cgroup 归属，升级进程
 	// 仍会在重启 webui 时被杀 —— install.sh 走不到结尾的"升级完成"标志，前端永远等不到完成。
 	// 放进独立 unit 后升级进程在自己的 cgroup 里，重启 webui 不影响它，能跑到结尾写出标志。
+	//
+	// 先重新拉取一份 install.sh 覆盖本地缓存副本再执行：本地这份是上一次升级时落地的，
+	// 一旦它本身有问题（例如 1.3.0 那次 Windows 打包把它写成了 CRLF 导致语法错误），
+	// 原地重跑同一个坏文件会让"一键升级"永远卡在同一个错误上，必须先换新才能自愈。
 	go func() {
 		cmd := exec.Command("systemd-run", "--collect",
 			"/bin/bash", "-c",
-			"bash /opt/tproxy-gw/install.sh upgrade >> /opt/tproxy-gw/logs/upgrade.log 2>&1")
+			"curl -fsSL "+installScriptRawURL+" -o /opt/tproxy-gw/install.sh.new "+
+				"&& mv /opt/tproxy-gw/install.sh.new /opt/tproxy-gw/install.sh "+
+				"&& chmod +x /opt/tproxy-gw/install.sh "+
+				"&& bash /opt/tproxy-gw/install.sh upgrade >> /opt/tproxy-gw/logs/upgrade.log 2>&1")
 		_ = cmd.Start()
 	}()
 
