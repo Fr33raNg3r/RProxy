@@ -40,6 +40,9 @@
           <n-button size="small" @click="restoreDefaults" :disabled="savingUpstreams">恢复默认</n-button>
           <n-button size="small" type="primary" :loading="savingUpstreams" @click="saveUpstreams">保存上游</n-button>
         </div>
+        <n-alert type="info" :show-icon="false" style="margin-top: 14px;">
+          保存上游或规则后会自动重启 mosdns 服务以生效。
+        </n-alert>
       </n-card>
 
       <n-card title="白名单 — 强制直连" size="medium">
@@ -91,10 +94,6 @@
         </div>
       </n-card>
     </div>
-
-    <n-alert type="info" :show-icon="false" style="margin-top: 16px;">
-      保存上游或规则后会自动重启 mosdns 服务以生效。
-    </n-alert>
   </div>
 </template>
 

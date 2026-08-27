@@ -99,8 +99,8 @@
               <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
               <td>
                 <div class="row-actions">
-                  <n-button size="tiny" @click="showQR(p)">配置 / 二维码</n-button>
-                  <n-button size="tiny" type="error" @click="confirmDelete(p)">删除</n-button>
+                  <n-button class="table-btn" size="tiny" @click="showQR(p)">配置 / 二维码</n-button>
+                  <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(p)">删除</n-button>
                 </div>
               </td>
             </tr>

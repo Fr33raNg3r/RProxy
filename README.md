@@ -88,8 +88,8 @@ wget -O- https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server/install
 
 | 组件 | 当前版本 | 状态 |
 |---|---|---|
-| Client | 1.3.3 | 稳定 |
-| Server | 1.3.3 | 稳定 |
+| Client | 1.3.4 | 稳定 |
+| Server | 1.3.4 | 稳定 |
 
 ## 已知问题
 

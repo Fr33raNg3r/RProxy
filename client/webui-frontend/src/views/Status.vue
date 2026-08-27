@@ -22,7 +22,7 @@
               </td>
               <td class="text-muted text-sm">{{ row.desc }}</td>
               <td>
-                <n-button size="tiny" @click="restart(row.key)" :disabled="row.disableRestart">重启</n-button>
+                <n-button class="table-btn" size="tiny" @click="restart(row.key)" :disabled="row.disableRestart">重启</n-button>
               </td>
             </tr>
           </tbody>
@@ -117,8 +117,8 @@
               <td>
                 <div class="row-actions">
                   <span class="text-mono">{{ idx + 1 }}</span>
-                  <n-button size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移">↑</n-button>
-                  <n-button size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移">↓</n-button>
+                  <n-button class="table-btn" size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移">↑</n-button>
+                  <n-button class="table-btn" size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移">↓</n-button>
                 </div>
               </td>
               <td><strong>{{ n.name }}</strong></td>
@@ -131,10 +131,10 @@
               </td>
               <td>
                 <div class="row-actions">
-                  <n-button size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId">切换</n-button>
-                  <n-button size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId">测试</n-button>
-                  <n-button size="tiny" @click="openEdit(n)">编辑</n-button>
-                  <n-button size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
+                  <n-button class="table-btn" size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId">切换</n-button>
+                  <n-button class="table-btn" size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId">测试</n-button>
+                  <n-button class="table-btn" size="tiny" @click="openEdit(n)">编辑</n-button>
+                  <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
                 </div>
               </td>
             </tr>

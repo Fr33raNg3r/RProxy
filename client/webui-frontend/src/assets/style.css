@@ -36,6 +36,7 @@ html, body, #app {
   justify-content: space-between;
   margin-bottom: 18px;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .page-header h2,
 .page-header h3 {
@@ -58,6 +59,15 @@ html, body, #app {
   gap: 16px;
   align-items: start;
 }
+/* 网格子项默认 min-width:auto，内容（如不换行的表格列）会把自己的轨道撑得比其他 1fr 轨道宽，
+   导致"平分"失效。加 min-width:0 让轨道宽度只看 1fr 分配，内容超宽就在卡片内部滚动。 */
+.card-grid > * {
+  min-width: 0;
+}
+.card-grid .n-table-wrapper,
+.card-grid table {
+  overflow-x: auto;
+}
 .card-full {
   grid-column: 1 / -1;
 }
@@ -71,6 +81,15 @@ html, body, #app {
 
 @media (max-width: 860px) {
   .app-main { padding: 16px; }
+}
+
+/* 表格内按钮统一放大 50%（实测 tiny 按钮原始尺寸 22px/12px/0 6px，这里 ×1.5）。
+   naive-ui 的尺寸样式是运行时注入的，同优先级选择器不保证覆盖顺序，故加 !important。 */
+.table-btn {
+  height: 33px !important;
+  padding: 0 9px !important;
+  font-size: 18px !important;
+  border-radius: 8px !important;
 }
 
 .row-actions {
