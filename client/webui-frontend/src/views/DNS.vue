@@ -8,7 +8,7 @@
     <n-alert v-if="success" type="success" closable style="margin-bottom: 12px;" @close="success = ''">{{ success }}</n-alert>
     <n-alert v-if="warning" type="warning" closable style="margin-bottom: 12px;" @close="warning = ''">{{ warning }}</n-alert>
 
-    <div class="card-stack">
+    <div class="card-grid">
       <n-card title="DNS 上游" size="medium">
         <div class="split-row">
           <div>
@@ -42,63 +42,59 @@
         </div>
       </n-card>
 
-      <h3 style="margin: 6px 0 0;">DNS 规则</h3>
+      <n-card title="白名单 — 强制直连" size="medium">
+        <div class="text-muted text-sm" style="margin-bottom: 8px;">
+          每行一个<strong>域名或 IP/CIDR</strong>。域名走国内 DNS 直连（自动匹配子域名，如
+          <code>example.com</code> 含 <code>www.example.com</code>）；填 IP/CIDR（如
+          <code>1.2.3.4</code>、<code>1.2.3.0/24</code>）则直接写入 nftables 强制直连（绕过代理）。
+        </div>
+        <n-input
+          v-model:value="rules.whitelist"
+          type="textarea"
+          :autosize="{ minRows: 6, maxRows: 12 }"
+          placeholder="example.com&#10;intranet.local&#10;1.2.3.4"
+        />
+        <div class="row-actions" style="margin-top: 14px;">
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+        </div>
+      </n-card>
 
-      <div class="card-grid">
-        <n-card title="白名单 — 强制直连" size="medium">
-          <div class="text-muted text-sm" style="margin-bottom: 8px;">
-            每行一个<strong>域名或 IP/CIDR</strong>。域名走国内 DNS 直连（自动匹配子域名，如
-            <code>example.com</code> 含 <code>www.example.com</code>）；填 IP/CIDR（如
-            <code>1.2.3.4</code>、<code>1.2.3.0/24</code>）则直接写入 nftables 强制直连（绕过代理）。
-          </div>
-          <n-input
-            v-model:value="rules.whitelist"
-            type="textarea"
-            :autosize="{ minRows: 6, maxRows: 12 }"
-            placeholder="example.com&#10;intranet.local&#10;1.2.3.4"
-          />
-          <div class="row-actions" style="margin-top: 14px;">
-            <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
-          </div>
-        </n-card>
+      <n-card title="黑名单 — 强制走代理" size="medium">
+        <div class="text-muted text-sm" style="margin-bottom: 8px;">
+          每行一个<strong>域名或 IP/CIDR</strong>。即使属于国内列表也强制走代理：域名走 DoH 解析后写入，
+          填 IP/CIDR（如 <code>1.2.3.4</code>、<code>1.2.3.0/24</code>）则直接写入 nftables 强制代理。
+        </div>
+        <n-input
+          v-model:value="rules.blacklist"
+          type="textarea"
+          :autosize="{ minRows: 6, maxRows: 12 }"
+          placeholder="some-blocked-cn-site.com&#10;1.2.3.4"
+        />
+        <div class="row-actions" style="margin-top: 14px;">
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+        </div>
+      </n-card>
 
-        <n-card title="黑名单 — 强制走代理" size="medium">
-          <div class="text-muted text-sm" style="margin-bottom: 8px;">
-            每行一个<strong>域名或 IP/CIDR</strong>。即使属于国内列表也强制走代理：域名走 DoH 解析后写入，
-            填 IP/CIDR（如 <code>1.2.3.4</code>、<code>1.2.3.0/24</code>）则直接写入 nftables 强制代理。
-          </div>
-          <n-input
-            v-model:value="rules.blacklist"
-            type="textarea"
-            :autosize="{ minRows: 6, maxRows: 12 }"
-            placeholder="some-blocked-cn-site.com&#10;1.2.3.4"
-          />
-          <div class="row-actions" style="margin-top: 14px;">
-            <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
-          </div>
-        </n-card>
-
-        <n-card title="静态 hosts — 直接返回固定 IP" size="medium">
-          <div class="text-muted text-sm" style="margin-bottom: 8px;">
-            每行一条记录，格式：<code>域名 IP</code>。例如：
-            <code>nas.local 192.168.1.10</code>
-          </div>
-          <n-input
-            v-model:value="rules.hosts"
-            type="textarea"
-            :autosize="{ minRows: 6, maxRows: 12 }"
-            placeholder="my-router.local 192.168.1.1&#10;nas.local 192.168.1.100"
-          />
-          <div class="row-actions" style="margin-top: 14px;">
-            <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
-          </div>
-        </n-card>
-      </div>
-
-      <n-alert type="info" :show-icon="false">
-        保存上游或规则后会自动重启 mosdns 服务以生效。
-      </n-alert>
+      <n-card title="静态 hosts — 直接返回固定 IP" size="medium">
+        <div class="text-muted text-sm" style="margin-bottom: 8px;">
+          每行一条记录，格式：<code>域名 IP</code>。例如：
+          <code>nas.local 192.168.1.10</code>
+        </div>
+        <n-input
+          v-model:value="rules.hosts"
+          type="textarea"
+          :autosize="{ minRows: 6, maxRows: 12 }"
+          placeholder="my-router.local 192.168.1.1&#10;nas.local 192.168.1.100"
+        />
+        <div class="row-actions" style="margin-top: 14px;">
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+        </div>
+      </n-card>
     </div>
+
+    <n-alert type="info" :show-icon="false" style="margin-top: 16px;">
+      保存上游或规则后会自动重启 mosdns 服务以生效。
+    </n-alert>
   </div>
 </template>
 

@@ -63,7 +63,7 @@
         <n-button type="warning" :loading="savingLan" style="margin-top: 16px;" @click="saveLan">保存并应用网络配置</n-button>
       </n-card>
 
-      <n-card title="配置导入/导出与紧急操作" size="medium" class="card-full">
+      <n-card title="配置导入/导出与紧急操作" size="medium">
         <div class="text-muted" style="margin-bottom: 14px;">
           导出节点池、DNS 上游、基础设置为 YAML 文件。<br>
           导入会替换上述配置并重启 Xray/mosdns。<strong>不包含密码、session 等敏感字段。</strong>

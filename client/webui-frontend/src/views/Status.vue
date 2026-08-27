@@ -16,7 +16,7 @@
           </thead>
           <tbody>
             <tr v-for="row in services" :key="row.key">
-              <td>{{ row.label }}</td>
+              <td style="white-space: nowrap;">{{ row.label }}</td>
               <td>
                 <n-tag :type="row.tagType" size="small" round>{{ row.text }}</n-tag>
               </td>
@@ -66,6 +66,33 @@
         </table>
       </n-card>
 
+      <n-card v-if="peers.length" size="medium">
+        <template #header>
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <span>WireGuard 实时网速</span>
+            <span class="text-muted text-sm">单位 KB/s</span>
+          </div>
+        </template>
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr>
+              <th>Peer</th>
+              <th>分配 IP</th>
+              <th style="width: 120px;">↑ 上传</th>
+              <th style="width: 120px;">↓ 下载</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in peers" :key="p.id">
+              <td><strong>{{ p.name }}</strong></td>
+              <td class="text-mono text-sm">{{ p.address }}</td>
+              <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
+              <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
       <n-card size="medium" class="card-full">
         <template #header>
           <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
@@ -110,33 +137,6 @@
                   <n-button size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
                 </div>
               </td>
-            </tr>
-          </tbody>
-        </n-table>
-      </n-card>
-
-      <n-card v-if="peers.length" size="medium" class="card-full">
-        <template #header>
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <span>WireGuard 实时网速</span>
-            <span class="text-muted text-sm">单位 KB/s</span>
-          </div>
-        </template>
-        <n-table :bordered="false" :single-line="false" size="small">
-          <thead>
-            <tr>
-              <th>Peer</th>
-              <th>分配 IP</th>
-              <th style="width: 120px;">↑ 上传</th>
-              <th style="width: 120px;">↓ 下载</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="p in peers" :key="p.id">
-              <td><strong>{{ p.name }}</strong></td>
-              <td class="text-mono text-sm">{{ p.address }}</td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
             </tr>
           </tbody>
         </n-table>

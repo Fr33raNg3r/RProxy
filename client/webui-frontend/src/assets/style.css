@@ -54,7 +54,7 @@ html, body, #app {
    仅在明确需要并排的页面（如设置页）使用，长文本/表格类页面继续用 .card-stack 单列。 */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
   align-items: start;
 }

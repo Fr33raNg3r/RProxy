@@ -13,7 +13,7 @@
     <n-alert v-if="error" type="error" closable style="margin-bottom: 12px;" @close="error = ''">{{ error }}</n-alert>
     <n-alert v-if="success" type="success" closable style="margin-bottom: 12px;" @close="success = ''">{{ success }}</n-alert>
 
-    <div class="card-stack">
+    <div class="card-grid">
       <n-card size="medium">
         <template #header>
           <div style="display: flex; align-items: center; gap: 10px;">
@@ -73,7 +73,7 @@
         <div v-if="endpointMsg" class="text-sm" style="margin-top: 8px; color: #4ade80;">{{ endpointMsg }}</div>
       </n-card>
 
-      <n-card size="medium">
+      <n-card size="medium" class="card-full">
         <template #header>
           <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
             <span>Peer 列表</span>
