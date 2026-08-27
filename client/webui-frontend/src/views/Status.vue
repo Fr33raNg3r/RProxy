@@ -92,56 +92,56 @@
           </tbody>
         </n-table>
       </n-card>
-
-      <n-card size="medium" class="card-full">
-        <template #header>
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <span>节点管理</span>
-            <n-button size="small" type="primary" @click="openCreate">+ 添加节点</n-button>
-          </div>
-        </template>
-        <n-empty v-if="nodes.length === 0" description="尚未添加任何节点。点击右上角「添加节点」开始。" />
-        <n-table v-else :bordered="false" :single-line="false" size="small">
-          <thead>
-            <tr>
-              <th style="width: 130px;">序号</th>
-              <th>名称</th>
-              <th>地址</th>
-              <th>WS 路径</th>
-              <th style="width: 80px;">状态</th>
-              <th style="width: 320px;">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(n, idx) in nodes" :key="n.id" :class="{ 'is-current': n.id === currentNodeId }">
-              <td>
-                <div class="row-actions">
-                  <span class="text-mono">{{ idx + 1 }}</span>
-                  <n-button class="table-btn" size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移">↑</n-button>
-                  <n-button class="table-btn" size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移">↓</n-button>
-                </div>
-              </td>
-              <td><strong>{{ n.name }}</strong></td>
-              <td class="text-mono text-sm">{{ n.address }}:{{ n.port }}</td>
-              <td class="text-mono text-sm">{{ n.ws_path }}</td>
-              <td>
-                <n-tag :type="n.enabled ? 'success' : 'default'" size="small" round>
-                  {{ n.enabled ? '启用' : '未启用' }}
-                </n-tag>
-              </td>
-              <td>
-                <div class="row-actions">
-                  <n-button class="table-btn" size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId">切换</n-button>
-                  <n-button class="table-btn" size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId">测试</n-button>
-                  <n-button class="table-btn" size="tiny" @click="openEdit(n)">编辑</n-button>
-                  <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </n-table>
-      </n-card>
     </div>
+
+    <n-card size="medium" style="margin-top: 16px;">
+      <template #header>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <span>节点管理</span>
+          <n-button size="small" type="primary" @click="openCreate">+ 添加节点</n-button>
+        </div>
+      </template>
+      <n-empty v-if="nodes.length === 0" description="尚未添加任何节点。点击右上角「添加节点」开始。" />
+      <n-table v-else :bordered="false" :single-line="false" size="small">
+        <thead>
+          <tr>
+            <th style="width: 130px;">序号</th>
+            <th>名称</th>
+            <th>地址</th>
+            <th>WS 路径</th>
+            <th style="width: 80px;">状态</th>
+            <th style="width: 320px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(n, idx) in nodes" :key="n.id" :class="{ 'is-current': n.id === currentNodeId }">
+            <td>
+              <div class="row-actions">
+                <span class="text-mono">{{ idx + 1 }}</span>
+                <n-button class="table-btn" size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移">↑</n-button>
+                <n-button class="table-btn" size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移">↓</n-button>
+              </div>
+            </td>
+            <td><strong>{{ n.name }}</strong></td>
+            <td class="text-mono text-sm">{{ n.address }}:{{ n.port }}</td>
+            <td class="text-mono text-sm">{{ n.ws_path }}</td>
+            <td>
+              <n-tag :type="n.enabled ? 'success' : 'default'" size="small" round>
+                {{ n.enabled ? '启用' : '未启用' }}
+              </n-tag>
+            </td>
+            <td>
+              <div class="row-actions">
+                <n-button class="table-btn" size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId">切换</n-button>
+                <n-button class="table-btn" size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId">测试</n-button>
+                <n-button class="table-btn" size="tiny" @click="openEdit(n)">编辑</n-button>
+                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-card>
 
     <!-- 添加/编辑节点 -->
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑节点' : '添加节点'" style="width: 540px;" :mask-closable="false">

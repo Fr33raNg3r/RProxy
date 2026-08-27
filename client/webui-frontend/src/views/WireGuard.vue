@@ -72,42 +72,42 @@
         </n-input-group>
         <div v-if="endpointMsg" class="text-sm" style="margin-top: 8px; color: #4ade80;">{{ endpointMsg }}</div>
       </n-card>
-
-      <n-card size="medium" class="card-full">
-        <template #header>
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <span>Peer 列表</span>
-            <span class="text-muted text-sm">实时网速（KB/s）</span>
-          </div>
-        </template>
-        <n-empty v-if="peers.length === 0" description="尚未添加任何 peer" />
-        <n-table v-else :bordered="false" :single-line="false" size="small">
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>分配 IP</th>
-              <th style="width: 120px;">↑ 上传</th>
-              <th style="width: 120px;">↓ 下载</th>
-              <th style="width: 240px;">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="p in peers" :key="p.id">
-              <td><strong>{{ p.name }}</strong></td>
-              <td class="text-mono text-sm">{{ p.address }}</td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
-              <td>
-                <div class="row-actions">
-                  <n-button class="table-btn" size="tiny" @click="showQR(p)">配置 / 二维码</n-button>
-                  <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(p)">删除</n-button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </n-table>
-      </n-card>
     </div>
+
+    <n-card size="medium" style="margin-top: 16px;">
+      <template #header>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <span>Peer 列表</span>
+          <span class="text-muted text-sm">实时网速（KB/s）</span>
+        </div>
+      </template>
+      <n-empty v-if="peers.length === 0" description="尚未添加任何 peer" />
+      <n-table v-else :bordered="false" :single-line="false" size="small">
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>分配 IP</th>
+            <th style="width: 120px;">↑ 上传</th>
+            <th style="width: 120px;">↓ 下载</th>
+            <th style="width: 240px;">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in peers" :key="p.id">
+            <td><strong>{{ p.name }}</strong></td>
+            <td class="text-mono text-sm">{{ p.address }}</td>
+            <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
+            <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
+            <td>
+              <div class="row-actions">
+                <n-button class="table-btn" size="tiny" @click="showQR(p)">配置 / 二维码</n-button>
+                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(p)">删除</n-button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-card>
 
     <!-- 添加 Peer -->
     <n-modal v-model:show="showCreate" preset="card" title="添加 WireGuard Peer" style="width: 460px;">

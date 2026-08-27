@@ -83,13 +83,13 @@ html, body, #app {
   .app-main { padding: 16px; }
 }
 
-/* 表格内按钮统一放大 50%（实测 tiny 按钮原始尺寸 22px/12px/0 6px，这里 ×1.5）。
+/* 表格内按钮字号与表格文字统一成 14px（原 tiny 按钮是 12px，表格文字本身就是 14px）。
    naive-ui 的尺寸样式是运行时注入的，同优先级选择器不保证覆盖顺序，故加 !important。 */
 .table-btn {
-  height: 33px !important;
-  padding: 0 9px !important;
-  font-size: 18px !important;
-  border-radius: 8px !important;
+  height: 26px !important;
+  padding: 0 7px !important;
+  font-size: 14px !important;
+  border-radius: 5px !important;
 }
 
 .row-actions {
