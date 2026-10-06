@@ -14,6 +14,7 @@ const (
 	WGServerPubKey  = "/opt/tproxy-gw/config/wireguard/server_publickey"
 	WGConfPath      = "/etc/wireguard/wg0.conf"
 	HealthFile      = "/opt/tproxy-gw/data/health.json"
+	FailbackState   = "/opt/tproxy-gw/data/failback.json"
 
 	DNSWhitelistPath = "/opt/tproxy-gw/config/dns/whitelist.txt"
 	DNSBlacklistPath = "/opt/tproxy-gw/config/dns/blacklist.txt"

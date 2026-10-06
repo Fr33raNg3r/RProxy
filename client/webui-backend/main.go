@@ -6,6 +6,7 @@
 //	webui render-xray        - 根据 nodes.json 重新生成 Xray 配置
 //	webui render-wg          - 根据 peers.json 重新生成 wg0.conf
 //	webui switch-next-node   - 切换到下一个启用节点（watchdog 调用）
+//	webui failback-check     - 探测排在前面的节点，恢复后回切（watchdog 调用）
 package main
 
 import (
@@ -31,6 +32,7 @@ func usage() {
   webui render-mosdns      重新生成 mosdns config.yaml
   webui render-update-timer 按 webui.json 重建每日更新 timer（升级时用，保住自定义时间）
   webui switch-next-node   切换到下一个启用的节点
+  webui failback-check     探测排在前面的节点，恢复后自动回切
   webui version            打印版本号
 `, Version)
 }
@@ -56,6 +58,8 @@ func main() {
 		runRenderUpdateTimer()
 	case "switch-next-node":
 		runSwitchNextNode()
+	case "failback-check":
+		runFailbackCheck()
 	case "version":
 		fmt.Println(Version)
 	case "-h", "--help", "help":
@@ -147,6 +151,17 @@ func runRenderUpdateTimer() {
 		os.Exit(1)
 	}
 	fmt.Printf("update timer 已重建：每天 %02d:%02d（北京时间）\n", cfg.UpdateHour, cfg.UpdateMinute)
+}
+
+func runFailbackCheck() {
+	msg, err := services.FailbackCheck()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "回切检查失败:", err)
+		os.Exit(1)
+	}
+	if msg != "" {
+		fmt.Println(msg)
+	}
 }
 
 func runSwitchNextNode() {

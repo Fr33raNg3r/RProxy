@@ -315,6 +315,13 @@ func SwitchToNextNode() error {
 	}
 	nextID := nodes[sorted[nextIdx]].ID
 
+	cfg.AutoSwitched = true // 自动故障转移：前面的节点恢复后允许回切
+	return applyNodeSwitch(cfg, nodes, nextID)
+}
+
+// applyNodeSwitch 切换到指定节点：同步 Enabled、保存配置、渲染并重启 Xray
+// 调用前应已设置好 cfg.AutoSwitched
+func applyNodeSwitch(cfg *config.WebUIConfig, nodes []config.Node, nextID string) error {
 	// 同步 Enabled：只有 next 是 true
 	for i := range nodes {
 		nodes[i].Enabled = nodes[i].ID == nextID

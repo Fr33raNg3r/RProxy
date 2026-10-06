@@ -247,6 +247,7 @@ func SwitchNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.CurrentNodeID = id
+	cfg.AutoSwitched = false // 手动切换：不再自动回切
 	if err := config.SaveWebUIConfig(cfg); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return

@@ -85,6 +85,7 @@ func runServe() {
 		r.Get("/api/settings", handlers.GetSettings)
 		r.Put("/api/settings", handlers.UpdateSettings)
 		r.Post("/api/settings/password", handlers.ChangePassword)
+		r.Post("/api/system/reboot", handlers.RebootSystem)
 		r.Post("/api/emergency-stop", handlers.EmergencyStop)
 		r.Post("/api/emergency-resume", handlers.EmergencyResume)
 

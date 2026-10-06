@@ -22,6 +22,9 @@ type WebUIConfig struct {
 	UpdateHour    int    `json:"update_hour"`
 	UpdateMinute  int    `json:"update_minute"`
 	CurrentNodeID string `json:"current_node_id"`
+	// AutoSwitched: 当前节点是否由 watchdog 故障转移自动切到的（手动切换会清除）。
+	// 仅为 true 时，才会在前面的节点恢复后自动回切
+	AutoSwitched bool `json:"auto_switched"`
 	// PasswordChanged: 是否已修改过初始随机密码。false（含字段缺失）= 首次登录需强制改密
 	PasswordChanged bool `json:"password_changed"`
 	// 本机静态网络配置（写入 /etc/network/interfaces）

@@ -94,6 +94,13 @@ if [[ $proxy_ok -eq 0 && $xray_active -eq 1 && -n "$current_node" ]]; then
     fi
 fi
 
+# ---------- 回切检查 ----------
+# 仅在代理正常时才检查：自动故障转移后，排在前面的节点恢复了就切回去
+# （是否需要检查、探测、切换都在 webui failback-check 里判断，不满足条件时立即返回）
+if [[ $proxy_ok -eq 1 ]]; then
+    "${BIN_DIR}/webui" failback-check 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" || true
+fi
+
 # ---------- 重启失活的辅助组件 ----------
 if [[ $mosdns_active -eq 0 ]]; then
     log_to_file "mosdns 未运行，尝试重启"

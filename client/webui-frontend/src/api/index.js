@@ -124,6 +124,7 @@ export const api = {
     if (!resp.ok) throw new Error(data.error || '导入失败')
     return data
   },
+  rebootSystem() { return request('/api/system/reboot', { method: 'POST' }) },
   restartService(name) { return request('/api/services/' + name + '/restart', { method: 'POST' }) },
 
   // 日志

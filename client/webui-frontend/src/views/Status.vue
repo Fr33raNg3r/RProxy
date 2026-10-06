@@ -2,7 +2,10 @@
   <div>
     <div class="page-header">
       <h2>系统状态</h2>
-      <span class="text-muted text-sm">{{ statusTime }}</span>
+      <div style="display: flex; align-items: center; gap: 12px;">
+        <span class="text-muted text-sm">{{ statusTime }}</span>
+        <n-button size="small" type="error" :loading="rebooting" @click="confirmReboot">重启服务器</n-button>
+      </div>
     </div>
 
     <n-alert v-if="error" type="error" closable style="margin-bottom: 14px;" @close="error = ''">{{ error }}</n-alert>
@@ -300,6 +303,27 @@ async function restart(name) {
   } catch (e) {
     error.value = e.message
   }
+}
+
+const rebooting = ref(false)
+
+function confirmReboot() {
+  dialog.warning({
+    title: '重启服务器',
+    content: '将重启整台旁路由。重启期间（约 1–2 分钟）局域网内所有设备会断网，WebUI 也会暂时无法访问。确定重启？',
+    positiveText: '重启',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      rebooting.value = true
+      try {
+        await api.rebootSystem()
+        message.warning('正在重启，请约 1–2 分钟后刷新页面', { duration: 10000 })
+      } catch (e) {
+        error.value = '重启失败：' + e.message
+        rebooting.value = false
+      }
+    }
+  })
 }
 
 function startSSE() {
