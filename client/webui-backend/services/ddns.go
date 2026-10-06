@@ -90,7 +90,7 @@ func fetchWANIP(urls []string) (string, error) {
 	return "", fmt.Errorf("获取 WAN IP 失败: %v", lastErr)
 }
 
-// syncRecords 对每条启用的记录：IP 没变就跳过，变了就调用 upsert。
+// syncRecords 对每条填写完整的记录：IP 没变就跳过，变了就调用 upsert。
 // last 保存"记录 ID -> 上次成功写入的指纹"，指纹包含厂商/域名/IP，
 // 所以改了记录的域名或厂商也会重新写入。
 // 返回本轮实际尝试过的记录的结果（nil 表示成功），跳过的记录不在其中。
@@ -98,7 +98,7 @@ func syncRecords(recs []config.DDNSRecord, ip string, last map[string]string,
 	upsert func(config.DDNSRecord, string) error) map[string]error {
 	res := map[string]error{}
 	for _, r := range recs {
-		if !r.Enabled {
+		if !r.Complete() {
 			continue
 		}
 		fp := strings.Join([]string{r.Provider, r.Domain, r.Sub, ip}, "|")
@@ -402,8 +402,12 @@ func RunDDNSNow() {
 		log.Printf("[ddns] %v", err)
 		return
 	}
-	if !cfg.Enabled {
-		return
+	configured := false
+	for _, r := range cfg.Records {
+		configured = configured || r.Complete()
+	}
+	if !configured {
+		return // 三家都没填，不生效
 	}
 
 	ip, err := fetchWANIP(wanIPURLs)
@@ -425,7 +429,9 @@ func RunDDNSNow() {
 	// 清掉已删除记录的状态
 	live := map[string]bool{}
 	for _, r := range cfg.Records {
-		live[r.ID] = true
+		if r.Complete() {
+			live[r.ID] = true
+		}
 	}
 	for id := range ddnsStatus.Records {
 		if !live[id] {

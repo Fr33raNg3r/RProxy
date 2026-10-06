@@ -15,7 +15,7 @@ const secretMask = "******"
 
 // maskDDNSSecrets 返回密钥已打码的副本（空密钥保持为空，方便前端区分"未设置"）
 func maskDDNSSecrets(c config.DDNSConfig) config.DDNSConfig {
-	out := config.DDNSConfig{Enabled: c.Enabled, Records: make([]config.DDNSRecord, len(c.Records))}
+	out := config.DDNSConfig{Records: make([]config.DDNSRecord, len(c.Records))}
 	copy(out.Records, c.Records)
 	for i := range out.Records {
 		if out.Records[i].Secret != "" {
@@ -31,7 +31,7 @@ func mergeDDNSSecrets(in, old config.DDNSConfig) config.DDNSConfig {
 	for _, r := range old.Records {
 		oldByID[r.ID] = r.Secret
 	}
-	out := config.DDNSConfig{Enabled: in.Enabled, Records: make([]config.DDNSRecord, len(in.Records))}
+	out := config.DDNSConfig{Records: make([]config.DDNSRecord, len(in.Records))}
 	copy(out.Records, in.Records)
 	for i := range out.Records {
 		if out.Records[i].Secret == secretMask {
@@ -41,23 +41,29 @@ func mergeDDNSSecrets(in, old config.DDNSConfig) config.DDNSConfig {
 	return out
 }
 
-func validateDDNSRecord(r *config.DDNSRecord) error {
-	switch r.Provider {
-	case "cloudflare", "namesilo":
-	case "dnspod":
-		if strings.TrimSpace(r.AuthID) == "" {
-			return fmt.Errorf("DNSPod 需要填写 API ID")
+var ddnsLabels = map[string]string{"cloudflare": "Cloudflare", "dnspod": "DNSPod", "namesilo": "NameSilo"}
+
+// validateDDNSConfig 去掉各字段首尾空格并校验：整张卡片留空 = 不生效，直接通过；
+// 填了一部分但不完整则报错，避免用户以为已经生效
+func validateDDNSConfig(c *config.DDNSConfig) error {
+	for i := range c.Records {
+		r := &c.Records[i]
+		r.Domain = strings.TrimSpace(r.Domain)
+		r.Sub = strings.TrimSpace(r.Sub)
+		r.AuthID = strings.TrimSpace(r.AuthID)
+		r.Secret = strings.TrimSpace(r.Secret)
+		if r.Domain == "" && r.Sub == "" && r.AuthID == "" && r.Secret == "" {
+			continue
 		}
-	default:
-		return fmt.Errorf("不支持的服务商: %q", r.Provider)
-	}
-	r.Domain = strings.TrimSpace(r.Domain)
-	r.Sub = strings.TrimSpace(r.Sub)
-	if r.Domain == "" {
-		return fmt.Errorf("主域名不能为空")
-	}
-	if strings.TrimSpace(r.Secret) == "" {
-		return fmt.Errorf("%s 的密钥不能为空", r.Domain)
+		label := ddnsLabels[r.Provider]
+		switch {
+		case r.Domain == "":
+			return fmt.Errorf("%s：请填写主域名", label)
+		case r.Provider == "dnspod" && r.AuthID == "":
+			return fmt.Errorf("%s：请填写 API ID", label)
+		case r.Secret == "":
+			return fmt.Errorf("%s：请填写密钥", label)
+		}
 	}
 	return nil
 }
@@ -76,27 +82,23 @@ func GetDDNS(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateDDNS PUT /api/ddns
-// 整体替换配置；保存后异步触发一轮更新
+// 整体替换配置（固定三家，留空的不生效）；保存后异步触发一轮更新
 func UpdateDDNS(w http.ResponseWriter, r *http.Request) {
-	var in config.DDNSConfig
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+	var raw config.DDNSConfig
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorMsg("请求体格式错误"))
 		return
 	}
+	in := config.NormalizeDDNS(raw)
 	old, err := config.LoadDDNSConfig()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return
 	}
 	merged := mergeDDNSSecrets(in, old)
-	for i := range merged.Records {
-		if merged.Records[i].ID == "" {
-			merged.Records[i].ID = services.GenerateID()
-		}
-		if err := validateDDNSRecord(&merged.Records[i]); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
-			return
-		}
+	if err := validateDDNSConfig(&merged); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
+		return
 	}
 	if err := config.SaveDDNSConfig(merged); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg("保存失败: "+err.Error()))

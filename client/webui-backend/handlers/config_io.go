@@ -123,16 +123,13 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// DDNS 记录校验（有则校验，格式不对整体拒绝，避免写入一半）
+	// DDNS 配置整理成固定三条并校验（格式不对整体拒绝，避免写入一半）
 	if bundle.DDNS != nil {
-		for i := range bundle.DDNS.Records {
-			if bundle.DDNS.Records[i].ID == "" {
-				bundle.DDNS.Records[i].ID = services.GenerateID()
-			}
-			if err := validateDDNSRecord(&bundle.DDNS.Records[i]); err != nil {
-				writeJSON(w, http.StatusBadRequest, errorMsg("DDNS 记录校验失败: "+err.Error()))
-				return
-			}
+		n := config.NormalizeDDNS(*bundle.DDNS)
+		bundle.DDNS = &n
+		if err := validateDDNSConfig(bundle.DDNS); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorMsg("DDNS 配置校验失败: "+err.Error()))
+			return
 		}
 	}
 

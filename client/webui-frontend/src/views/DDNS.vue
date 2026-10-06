@@ -2,45 +2,43 @@
   <div>
     <div class="page-header">
       <h2>DDNS</h2>
-      <n-button type="primary" @click="addRecord">+ 添加记录</n-button>
+      <div style="display: flex; gap: 12px;">
+        <n-button :loading="running" @click="runNow">立即更新</n-button>
+        <n-button type="primary" :loading="saving" @click="save">保存</n-button>
+      </div>
     </div>
 
     <n-alert v-if="error" type="error" closable style="margin-bottom: 12px;" @close="error = ''">{{ error }}</n-alert>
     <n-alert v-if="success" type="success" closable style="margin-bottom: 12px;" @close="success = ''">{{ success }}</n-alert>
 
     <n-card size="medium" style="margin-bottom: 16px;">
-      <div class="text-muted text-sm" style="margin-bottom: 14px;">
-        每 5 分钟自动查询公网 IP（IPv4），发生变化时更新下方各条 A 记录。支持 Cloudflare、DNSPod、NameSilo。
+      <div class="text-muted text-sm" style="margin-bottom: 10px;">
+        哪家填写完整（域名、密钥）并保存，哪家就生效；留空则不生效。每 5 分钟自动查询公网 IP（IPv4），变化时更新对应的 A 记录。
       </div>
-      <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
-        <n-switch v-model:value="cfg.enabled" />
-        <span>{{ cfg.enabled ? '已启用' : '已禁用' }}</span>
-        <span class="text-muted">当前公网 IP：<span class="text-mono">{{ status.wan_ip || '未知' }}</span></span>
-        <span v-if="status.error" style="color: #f87171;">{{ status.error }}</span>
-      </div>
+      <span class="text-muted">当前公网 IP：<span class="text-mono">{{ status.wan_ip || '未知' }}</span></span>
+      <span v-if="status.error" style="color: #f87171; margin-left: 16px;">{{ status.error }}</span>
     </n-card>
 
-    <n-card title="记录列表" size="medium">
-      <div v-if="!cfg.records.length" class="text-muted">暂无记录，点击右上角"添加记录"。</div>
-      <div v-for="(r, i) in cfg.records" :key="r.id || i" class="ddns-row">
-        <n-select v-model:value="r.provider" :options="providers" style="width: 140px;" />
-        <n-input v-model:value="r.sub" placeholder="子域名，根域名留空" style="width: 150px;" />
-        <n-input v-model:value="r.domain" placeholder="主域名 example.com" style="width: 190px;" />
-        <n-input v-if="r.provider === 'dnspod'" v-model:value="r.auth_id" placeholder="API ID" style="width: 110px;" />
-        <n-input v-model:value="r.secret" type="password" show-password-on="click"
-                 :placeholder="secretHint(r.provider)" style="width: 230px;" />
-        <n-switch v-model:value="r.enabled" />
-        <n-button text type="error" @click="removeRecord(i)">删除</n-button>
-        <div v-if="recStatus(r)" class="text-sm ddns-status" :style="{ color: recStatus(r).ok ? '#4ade80' : '#f87171' }">
-          {{ recStatus(r).ok ? '已更新为 ' + recStatus(r).ip : '失败：' + recStatus(r).error }}
-          <span class="text-muted">（{{ fmtTime(recStatus(r).time) }}）</span>
+    <div class="card-grid">
+      <n-card v-for="r in cfg.records" :key="r.id" size="medium">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span>{{ labels[r.provider] }}</span>
+            <n-tag :type="statusOf(r).type" size="small" round>{{ statusOf(r).text }}</n-tag>
+          </div>
+        </template>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <n-input v-model:value="r.sub" placeholder="子域名，如 home（根域名留空）" />
+          <n-input v-model:value="r.domain" placeholder="主域名，如 example.com" />
+          <n-input v-if="r.provider === 'dnspod'" v-model:value="r.auth_id" placeholder="API ID" />
+          <n-input v-model:value="r.secret" type="password" show-password-on="click" :placeholder="secretHint(r.provider)" />
         </div>
-      </div>
-      <div style="display: flex; gap: 12px; margin-top: 16px;">
-        <n-button type="primary" :loading="saving" @click="save">保存</n-button>
-        <n-button :loading="running" @click="runNow">立即更新</n-button>
-      </div>
-    </n-card>
+        <div v-if="statusOf(r).detail" class="text-sm"
+             :style="{ marginTop: '10px', color: statusOf(r).type === 'error' ? '#f87171' : '' }">
+          {{ statusOf(r).detail }}
+        </div>
+      </n-card>
+    </div>
   </div>
 </template>
 
@@ -48,14 +46,10 @@
 import { ref, onMounted } from 'vue'
 import { api } from '../api'
 
-const providers = [
-  { label: 'Cloudflare', value: 'cloudflare' },
-  { label: 'DNSPod', value: 'dnspod' },
-  { label: 'NameSilo', value: 'namesilo' }
-]
+const labels = { cloudflare: 'Cloudflare', dnspod: 'DNSPod', namesilo: 'NameSilo' }
 
-const cfg = ref({ enabled: false, records: [] })
-const status = ref({ wan_ip: '', error: '', records: {} })
+const cfg = ref({ records: [] })
+const status = ref({ wan_ip: '', error: '', checked: '', records: {} })
 const error = ref('')
 const success = ref('')
 const saving = ref(false)
@@ -67,20 +61,21 @@ function secretHint(p) {
   return 'API Key'
 }
 
-function recStatus(r) {
-  return r.id ? status.value.records?.[r.id] : null
+// 与后端 Complete() 一致：域名、密钥必填，DNSPod 还要 API ID
+function isComplete(r) {
+  return !!(r.domain?.trim() && r.secret?.trim() && (r.provider !== 'dnspod' || r.auth_id?.trim()))
 }
 
 function fmtTime(t) {
   return t ? new Date(t).toLocaleString() : ''
 }
 
-function addRecord() {
-  cfg.value.records.push({ id: '', provider: 'cloudflare', domain: '', sub: '', auth_id: '', secret: '', enabled: true })
-}
-
-function removeRecord(i) {
-  cfg.value.records.splice(i, 1)
+function statusOf(r) {
+  if (!isComplete(r)) return { text: '未配置', type: 'default' }
+  const s = status.value.records?.[r.id]
+  if (!s) return { text: '等待更新', type: 'info' }
+  if (s.ok) return { text: '✓ 已更新', type: 'success', detail: `${s.ip}（${fmtTime(s.time)}）` }
+  return { text: '异常', type: 'error', detail: s.error }
 }
 
 async function load() {
@@ -93,14 +88,37 @@ async function load() {
   }
 }
 
+// 保存后后台会立刻跑一轮，这里轮询状态（最多 30 秒），状态连续两次没变化就停
+async function pollStatus(checkedBefore) {
+  let prev = ''
+  let stable = 0
+  for (let i = 0; i < 15; i++) {
+    await new Promise(r => setTimeout(r, 2000))
+    try {
+      const r = await api.getDDNS()
+      status.value = r.status
+      if (r.status.checked !== checkedBefore) {
+        const cur = JSON.stringify(r.status)
+        stable = cur === prev ? stable + 1 : 0
+        prev = cur
+        if (stable >= 2) return
+      }
+    } catch (e) {
+      return
+    }
+  }
+}
+
 async function save() {
   saving.value = true
   error.value = ''
   try {
+    const checkedBefore = status.value.checked
     const r = await api.saveDDNS(cfg.value)
     cfg.value = r.config
-    success.value = '已保存，正在后台更新'
-    setTimeout(() => { success.value = ''; load() }, 3000)
+    success.value = '已保存'
+    setTimeout(() => success.value = '', 3000)
+    if (cfg.value.records.some(isComplete)) await pollStatus(checkedBefore)
   } catch (e) {
     error.value = '保存失败：' + e.message
   } finally {
@@ -114,8 +132,6 @@ async function runNow() {
   try {
     const r = await api.runDDNS()
     status.value = r.status
-    success.value = '已执行一轮更新'
-    setTimeout(() => success.value = '', 3000)
   } catch (e) {
     error.value = '执行失败：' + e.message
   } finally {
@@ -125,17 +141,3 @@ async function runNow() {
 
 onMounted(load)
 </script>
-
-<style scoped>
-.ddns-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-.ddns-status {
-  width: 100%;
-}
-</style>

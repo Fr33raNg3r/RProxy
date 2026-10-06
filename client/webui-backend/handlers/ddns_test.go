@@ -51,7 +51,7 @@ func TestBundleRoundTripKeepsPeersAndDDNS(t *testing.T) {
 	in := ClientConfigBundle{
 		Version: "1",
 		WGPeers: []config.WGPeer{{ID: "p1", Name: "phone", PrivateKey: "priv", PublicKey: "pub", Address: "172.16.7.2/32"}},
-		DDNS:    &config.DDNSConfig{Enabled: true, Records: []config.DDNSRecord{{ID: "r1", Provider: "namesilo", Domain: "a.com", Secret: "k", Enabled: true}}},
+		DDNS:    &config.DDNSConfig{Records: []config.DDNSRecord{{ID: "namesilo", Provider: "namesilo", Domain: "a.com", Secret: "k"}}},
 	}
 	b, err := yaml.Marshal(in)
 	if err != nil {
@@ -63,5 +63,38 @@ func TestBundleRoundTripKeepsPeersAndDDNS(t *testing.T) {
 	}
 	if len(out.WGPeers) != 1 || out.WGPeers[0].PrivateKey != "priv" || out.DDNS == nil || out.DDNS.Records[0].Secret != "k" {
 		t.Fatalf("往返不一致: %+v", out)
+	}
+}
+
+func TestValidateDDNSConfigBlankIsOKPartialIsRejected(t *testing.T) {
+	blank := config.NormalizeDDNS(config.DDNSConfig{})
+	if err := validateDDNSConfig(&blank); err != nil {
+		t.Fatalf("全部留空应通过（不生效），实际 %v", err)
+	}
+
+	partial := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
+		{Provider: "cloudflare", Domain: "a.com"}, // 填了域名没填密钥
+	}})
+	if err := validateDDNSConfig(&partial); err == nil {
+		t.Fatal("只填了一半应报错")
+	}
+
+	dnspodNoID := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
+		{Provider: "dnspod", Domain: "a.com", Secret: "t"},
+	}})
+	if err := validateDDNSConfig(&dnspodNoID); err == nil {
+		t.Fatal("DNSPod 缺 API ID 应报错")
+	}
+
+	ok := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
+		{Provider: "dnspod", Domain: " a.com ", Sub: " h ", AuthID: "1", Secret: "t"},
+	}})
+	if err := validateDDNSConfig(&ok); err != nil {
+		t.Fatalf("填全应通过，实际 %v", err)
+	}
+	for _, r := range ok.Records {
+		if r.Provider == "dnspod" && (r.Domain != "a.com" || r.Sub != "h") {
+			t.Errorf("应去掉首尾空格: %+v", r)
+		}
 	}
 }

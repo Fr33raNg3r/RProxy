@@ -61,7 +61,7 @@ func TestFetchWANIPAllFail(t *testing.T) {
 // ---------- 同步逻辑 ----------
 
 func TestSyncRecordsSkipsWhenIPUnchanged(t *testing.T) {
-	recs := []config.DDNSRecord{{ID: "a", Provider: "cloudflare", Domain: "x.com", Sub: "h", Enabled: true}}
+	recs := []config.DDNSRecord{{ID: "a", Provider: "cloudflare", Domain: "x.com", Sub: "h", Secret: "s"}}
 	last := map[string]string{}
 	calls := 0
 	up := func(config.DDNSRecord, string) error { calls++; return nil }
@@ -79,9 +79,9 @@ func TestSyncRecordsSkipsWhenIPUnchanged(t *testing.T) {
 
 func TestSyncRecordsFailureIsRetriedAndIsolated(t *testing.T) {
 	recs := []config.DDNSRecord{
-		{ID: "bad", Provider: "dnspod", Domain: "x.com", Enabled: true},
-		{ID: "ok", Provider: "namesilo", Domain: "y.com", Enabled: true},
-		{ID: "off", Provider: "cloudflare", Domain: "z.com", Enabled: false},
+		{ID: "bad", Provider: "dnspod", Domain: "x.com", AuthID: "1", Secret: "s"},
+		{ID: "ok", Provider: "namesilo", Domain: "y.com", Secret: "s"},
+		{ID: "off", Provider: "cloudflare", Domain: "z.com"}, // 没填密钥：未配置完整
 	}
 	last := map[string]string{}
 	var mu sync.Mutex
@@ -101,7 +101,7 @@ func TestSyncRecordsFailureIsRetriedAndIsolated(t *testing.T) {
 		t.Fatalf("结果不符: %v", res)
 	}
 	if _, ok := res["off"]; ok || seen["off"] != 0 {
-		t.Fatal("禁用的记录不应被处理")
+		t.Fatal("没填完整的记录不应被处理")
 	}
 	syncRecords(recs, "1.1.1.1", last, up)
 	if seen["bad"] != 2 || seen["ok"] != 1 {
