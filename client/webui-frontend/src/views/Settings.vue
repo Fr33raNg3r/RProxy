@@ -65,8 +65,8 @@
 
       <n-card title="配置导入/导出与紧急操作" size="medium">
         <div class="text-muted" style="margin-bottom: 14px;">
-          导出节点池、DNS 上游、基础设置为 YAML 文件。<br>
-          导入会替换上述配置并重启 Xray/mosdns。<strong>不包含密码、session 等敏感字段。</strong>
+          导出节点池、DNS 上游、基础设置、WireGuard peers、DDNS 配置为 YAML 文件。<br>
+          导入会替换上述配置并重启 Xray/mosdns/WireGuard。<strong>文件包含 WireGuard 私钥和 DDNS 密钥，请妥善保管；不含登录密码、session。</strong>
         </div>
         <div class="row-actions">
           <n-button type="primary" @click="exportConfig">导出 YAML</n-button>
@@ -137,7 +137,7 @@ async function onImportFile(e) {
   await new Promise((resolve) => {
     dialog.warning({
       title: '导入配置',
-      content: `确认导入 ${file.name}？将替换节点池、DNS 上游、基础设置并重启 Xray/mosdns。`,
+      content: `确认导入 ${file.name}？将替换节点池、DNS 上游、基础设置、WireGuard peers、DDNS 配置并重启相关服务。`,
       positiveText: '导入',
       negativeText: '取消',
       onPositiveClick: async () => {
@@ -147,7 +147,7 @@ async function onImportFile(e) {
         try {
           const text = await file.text()
           const r = await api.importConfig(text)
-          importResult.value = `导入完成：节点 ${r.node_count} 个${r.dns ? '，DNS 配置已替换' : ''}`
+          importResult.value = `导入完成：节点 ${r.node_count} 个${r.dns ? '，DNS 配置已替换' : ''}${r.wg_peers ? '，WireGuard peers 已替换' : ''}${r.ddns ? '，DDNS 配置已替换' : ''}`
           success.value = '配置已导入'
           setTimeout(() => success.value = '', 5000)
         } catch (e) {

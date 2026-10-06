@@ -73,6 +73,11 @@ export const api = {
     return request('/api/wireguard/endpoint', { method: 'POST', body: { endpoint } })
   },
 
+  // DDNS
+  getDDNS() { return request('/api/ddns') },
+  saveDDNS(config) { return request('/api/ddns', { method: 'PUT', body: config }) },
+  runDDNS() { return request('/api/ddns/run', { method: 'POST' }) },
+
   // 版本检查与升级
   getVersion() { return request('/api/version') },
   refreshLatestVersion() { return request('/api/version/refresh', { method: 'POST' }) },

@@ -13,13 +13,17 @@ import (
 )
 
 // ClientConfigBundle 是导入/导出的整体客户端配置快照
-// 不包含密码哈希、session_secret 等运行时敏感字段
+// 不包含密码哈希、session_secret 等 WebUI 登录相关字段；
+// 但包含 WireGuard peer 私钥和 DDNS 密钥，导出文件需妥善保管。
+// wg_peers / ddns 为空（旧版导出文件没有这两项）时，导入不会动现有数据。
 type ClientConfigBundle struct {
 	Version  string                  `yaml:"version"`
 	Exported string                  `yaml:"exported_at"`
 	WebUI    webUISection            `yaml:"webui"`
 	Nodes    []config.Node           `yaml:"nodes"`
 	DNS      *config.DNSUpstreams   `yaml:"dns_upstreams,omitempty"`
+	WGPeers  []config.WGPeer         `yaml:"wg_peers"`
+	DDNS     *config.DDNSConfig      `yaml:"ddns,omitempty"`
 }
 
 type webUISection struct {
@@ -52,6 +56,17 @@ func ExportConfig(w http.ResponseWriter, r *http.Request) {
 		dnsPtr = &dns
 	}
 
+	peers, err := config.LoadWGPeers()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
+		return
+	}
+	ddns, err := config.LoadDDNSConfig()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
+		return
+	}
+
 	bundle := ClientConfigBundle{
 		Version:  "1",
 		Exported: time.Now().Format(time.RFC3339),
@@ -65,8 +80,10 @@ func ExportConfig(w http.ResponseWriter, r *http.Request) {
 			WGSubnet:      cfg.WGSubnet,
 			WGEndpoint:    cfg.WGEndpoint,
 		},
-		Nodes: nodes,
-		DNS:   dnsPtr,
+		Nodes:   nodes,
+		DNS:     dnsPtr,
+		WGPeers: peers,
+		DDNS:    &ddns,
 	}
 
 	b, err := yaml.Marshal(bundle)
@@ -106,6 +123,19 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DDNS 记录校验（有则校验，格式不对整体拒绝，避免写入一半）
+	if bundle.DDNS != nil {
+		for i := range bundle.DDNS.Records {
+			if bundle.DDNS.Records[i].ID == "" {
+				bundle.DDNS.Records[i].ID = services.GenerateID()
+			}
+			if err := validateDDNSRecord(&bundle.DDNS.Records[i]); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorMsg("DDNS 记录校验失败: "+err.Error()))
+				return
+			}
+		}
+	}
+
 	// 写 nodes.json
 	if err := config.SaveNodes(bundle.Nodes); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg("保存 nodes.json 失败: "+err.Error()))
@@ -139,6 +169,33 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// WireGuard peers：导入文件带了才整体替换，然后重渲染 wg0.conf
+	if bundle.WGPeers != nil {
+		if err := config.SaveWGPeers(bundle.WGPeers); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 peers.json 失败: "+err.Error()))
+			return
+		}
+	}
+	if bundle.WGPeers != nil || cfg.WGEnabled {
+		peers, _ := config.LoadWGPeers()
+		if err := services.RenderWGConfig(cfg, peers); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 wg0.conf 失败: "+err.Error()))
+			return
+		}
+		if cfg.WGEnabled {
+			_ = services.RestartWG()
+		}
+	}
+
+	// DDNS：导入文件带了才整体替换，并立刻跑一轮
+	if bundle.DDNS != nil {
+		if err := config.SaveDDNSConfig(*bundle.DDNS); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 ddns.json 失败: "+err.Error()))
+			return
+		}
+		go services.RunDDNSNow()
+	}
+
 	// 重渲染 Xray + mosdns 并重启关键服务
 	if err := services.RenderXrayConfig(bundle.Nodes, cfg.CurrentNodeID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 Xray 配置失败: "+err.Error()))
@@ -157,5 +214,7 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		"ok":         true,
 		"node_count": len(bundle.Nodes),
 		"dns":        bundle.DNS != nil,
+		"wg_peers":   bundle.WGPeers != nil,
+		"ddns":       bundle.DDNS != nil,
 	})
 }

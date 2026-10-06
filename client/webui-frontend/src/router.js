@@ -10,6 +10,7 @@ const routes = [
       { path: 'status',    component: () => import('./views/Status.vue') },
       { path: 'wireguard', component: () => import('./views/WireGuard.vue') },
       { path: 'dns',       component: () => import('./views/DNS.vue') },
+      { path: 'ddns',      component: () => import('./views/DDNS.vue') },
       { path: 'settings',  component: () => import('./views/Settings.vue') },
       { path: 'logs',      component: () => import('./views/Logs.vue') }
     ]

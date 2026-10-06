@@ -11,6 +11,7 @@ import (
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/handlers"
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/middleware"
+	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -28,6 +29,9 @@ func runServe() {
 
 	// 启动版本检查（本地立即读，远程异步拉取）
 	handlers.InitVersionCheck()
+
+	// 启动 DDNS 后台循环（配置未启用时每轮直接返回）
+	services.StartDDNS()
 
 	r := chi.NewRouter()
 
@@ -71,6 +75,11 @@ func runServe() {
 		r.Get("/api/dns/upstreams", handlers.GetDNSUpstreams)
 		r.Get("/api/dns/upstreams/defaults", handlers.GetDNSUpstreamsDefaults)
 		r.Put("/api/dns/upstreams", handlers.UpdateDNSUpstreams)
+
+		// DDNS
+		r.Get("/api/ddns", handlers.GetDDNS)
+		r.Put("/api/ddns", handlers.UpdateDDNS)
+		r.Post("/api/ddns/run", handlers.RunDDNS)
 
 		// 设置
 		r.Get("/api/settings", handlers.GetSettings)

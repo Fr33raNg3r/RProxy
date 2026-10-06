@@ -111,6 +111,7 @@ const menuOptions = [
   { label: '系统状态', key: '/status' },
   { label: 'WireGuard', key: '/wireguard' },
   { label: 'DNS 规则', key: '/dns' },
+  { label: 'DDNS', key: '/ddns' },
   { label: '设置', key: '/settings' },
   { label: '日志', key: '/logs' }
 ]
