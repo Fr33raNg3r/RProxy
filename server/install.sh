@@ -124,15 +124,25 @@ install_base_packages() {
         nginx jq qrencode socat \
         php-fpm php-cli php-curl \
         unattended-upgrades cron \
-        unzip openssl systemd-timesyncd
+        unzip openssl
     log_done "基础包安装完成"
 }
 
 enable_ntp() {
-    log_step "启用 NTP（systemd-timesyncd）"
-    systemctl disable --now ntp ntpsec chrony 2>/dev/null || true
-    timedatectl set-ntp true 2>/dev/null || true
-    systemctl enable --now systemd-timesyncd 2>/dev/null || true
+    log_step "启用 NTP（chrony）"
+    # chrony 与 systemd-timesyncd 互斥，安装时 apt 会自动卸载后者
+    systemctl disable --now ntpsec 2>/dev/null || true
+    apt-get install -y --no-install-recommends chrony
+    # 海外时间源；注释掉 Debian 默认 pool，避免混入其他源
+    mkdir -p /etc/chrony/sources.d
+    cat > /etc/chrony/sources.d/rproxy.sources <<'EOF'
+server pool.ntp.org iburst
+server time.cloudflare.com iburst
+server time.nist.gov iburst
+EOF
+    sed -i 's/^pool /# pool /' /etc/chrony/chrony.conf
+    systemctl enable chrony 2>/dev/null || true
+    systemctl restart chrony
     log_done "NTP 已启用"
 }
 

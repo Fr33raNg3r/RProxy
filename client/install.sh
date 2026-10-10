@@ -151,16 +151,25 @@ install_base_packages() {
         wget curl ca-certificates \
         nftables wireguard-tools qrencode jq \
         unzip tar xz-utils ifupdown \
-        cron systemd systemd-timesyncd
+        cron systemd
     log_done "基础软件包安装完成"
 }
 
 enable_ntp() {
-    log_step "启用 NTP（systemd-timesyncd）"
-    # 关闭其他可能冲突的 NTP 客户端
-    systemctl disable --now ntp ntpsec chrony 2>/dev/null || true
-    timedatectl set-ntp true 2>/dev/null || true
-    systemctl enable --now systemd-timesyncd 2>/dev/null || true
+    log_step "启用 NTP（chrony）"
+    # 关闭其他可能冲突的 NTP 客户端（chrony 与 systemd-timesyncd 互斥，安装时 apt 会自动卸载后者）
+    systemctl disable --now ntpsec 2>/dev/null || true
+    apt-get install -y --no-install-recommends chrony
+    # 国内时间源；注释掉 Debian 默认 pool，避免混入其他源
+    mkdir -p /etc/chrony/sources.d
+    cat > /etc/chrony/sources.d/rproxy.sources <<'EOF'
+server ntp.ntsc.ac.cn iburst
+server ntp.aliyun.com iburst
+server cn.pool.ntp.org iburst
+EOF
+    sed -i 's/^pool /# pool /' /etc/chrony/chrony.conf
+    systemctl enable chrony 2>/dev/null || true
+    systemctl restart chrony
     log_done "NTP 已启用"
 }
 
