@@ -119,6 +119,16 @@ action_system_optimize() {
 install_base_packages() {
     log_step "安装基础软件包"
     apt-get update -y
+    log_info "升级系统已有软件包（可能需要几分钟）"
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        full-upgrade || die "系统升级失败"
+    # 内核有更新时当前仍运行旧内核，完成页提示重启
+    local newest_kernel
+    newest_kernel=$(ls -v /boot/vmlinuz-* 2>/dev/null | tail -1 || true)
+    if [[ -n "$newest_kernel" && "$newest_kernel" != "/boot/vmlinuz-$(uname -r)" ]]; then
+        NEED_REBOOT=1
+    fi
     apt-get install -y --no-install-recommends \
         wget curl ca-certificates \
         nginx jq qrencode socat \
@@ -415,6 +425,14 @@ deploy_files() {
 # ============================================================================
 
 deploy_librespeed() {
+    # 目录有内容但缺少测速后端文件：视为用户自定义站点，跳过部署避免覆盖
+    # 目录为空或含 empty.php + garbage.php（LibreSpeed）则照常部署/更新
+    if [[ -n "$(ls -A "${WEB_ROOT}" 2>/dev/null)" ]]; then
+        if [[ ! -f "${WEB_ROOT}/empty.php" || ! -f "${WEB_ROOT}/garbage.php" ]]; then
+            log_info "检测到自定义站点（${WEB_ROOT}），跳过 LibreSpeed 部署"
+            return 0
+        fi
+    fi
     log_step "部署 LibreSpeed 测速网站"
     mkdir -p "${WEB_ROOT}"
     cp -a "${BUILD_DIR}/configs/librespeed/"* "${WEB_ROOT}/"
@@ -737,6 +755,10 @@ show_completion_info() {
     echo "    tproxy-server show           显示客户端配置"
     echo "    tproxy-server help           完整帮助"
     echo ""
+    if [[ "${NEED_REBOOT:-0}" == "1" ]]; then
+        echo -e "  ${YELLOW}系统内核已升级，建议执行 reboot 重启后生效。${NC}"
+        echo ""
+    fi
 }
 
 # ============================================================================

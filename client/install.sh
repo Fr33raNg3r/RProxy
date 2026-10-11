@@ -147,6 +147,16 @@ EOF
 install_base_packages() {
     log_step "更新 apt 索引并安装基础软件包"
     apt-get update -y
+    log_info "升级系统已有软件包（可能需要几分钟）"
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        full-upgrade || die "系统升级失败"
+    # 内核有更新时当前仍运行旧内核，完成页提示重启
+    local newest_kernel
+    newest_kernel=$(ls -v /boot/vmlinuz-* 2>/dev/null | tail -1 || true)
+    if [[ -n "$newest_kernel" && "$newest_kernel" != "/boot/vmlinuz-$(uname -r)" ]]; then
+        NEED_REBOOT=1
+    fi
     apt-get install -y --no-install-recommends \
         wget curl ca-certificates \
         nftables wireguard-tools qrencode jq \
@@ -943,6 +953,10 @@ show_completion_info() {
     echo -e "  紧急救援：在旁路由 SSH 执行 ${CYAN}${SCRIPTS_DIR}/emergency-stop.sh${NC}"
     echo -e "  可清空所有透明代理规则恢复直连。"
     echo ""
+    if [[ "${NEED_REBOOT:-0}" == "1" ]]; then
+        echo -e "  ${YELLOW}系统内核已升级，建议稍后执行 reboot 重启后生效。${NC}"
+        echo ""
+    fi
     if [[ -n "${LAN_IP_CIDR:-}" ]]; then
         echo -e "  ${YELLOW}本机 IP 已配置为 ${LAN_IP_CIDR}（网关 ${LAN_GATEWAY}）。${NC}"
         echo -e "  ${YELLOW}马上会重启网络使其生效，若 IP 有变更当前连接将断开，${NC}"
