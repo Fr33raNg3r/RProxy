@@ -37,8 +37,8 @@
           </div>
         </div>
         <div class="row-actions" style="margin-top: 14px;">
-          <n-button size="small" @click="restoreDefaults" :disabled="savingUpstreams">恢复默认</n-button>
-          <n-button size="small" type="primary" :loading="savingUpstreams" @click="saveUpstreams">保存上游</n-button>
+          <n-button size="small" @click="restoreDefaults" :disabled="savingUpstreams"><template #icon><SvgIcon name="reset" /></template>恢复默认</n-button>
+          <n-button size="small" type="primary" :loading="savingUpstreams" @click="saveUpstreams"><template #icon><SvgIcon name="save" /></template>保存上游</n-button>
         </div>
         <n-alert type="info" :show-icon="false" style="margin-top: 14px;">
           保存上游或规则后会自动重启 mosdns 服务以生效。
@@ -58,7 +58,7 @@
           placeholder="example.com&#10;intranet.local&#10;1.2.3.4"
         />
         <div class="row-actions" style="margin-top: 14px;">
-          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules"><template #icon><SvgIcon name="save" /></template>保存规则</n-button>
         </div>
       </n-card>
 
@@ -74,7 +74,7 @@
           placeholder="some-blocked-cn-site.com&#10;1.2.3.4"
         />
         <div class="row-actions" style="margin-top: 14px;">
-          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules"><template #icon><SvgIcon name="save" /></template>保存规则</n-button>
         </div>
       </n-card>
 
@@ -90,7 +90,7 @@
           placeholder="my-router.local 192.168.1.1&#10;nas.local 192.168.1.100"
         />
         <div class="row-actions" style="margin-top: 14px;">
-          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules">保存规则</n-button>
+          <n-button size="small" type="primary" :loading="savingRules" @click="saveRules"><template #icon><SvgIcon name="save" /></template>保存规则</n-button>
         </div>
       </n-card>
     </div>

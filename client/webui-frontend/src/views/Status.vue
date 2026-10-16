@@ -4,13 +4,15 @@
       <h2>系统状态</h2>
       <div style="display: flex; align-items: center; gap: 12px;">
         <span class="text-muted text-sm">{{ statusTime }}</span>
-        <n-button size="small" type="error" :loading="rebooting" @click="confirmReboot">重启服务器</n-button>
+        <n-button size="small" type="error" :loading="rebooting" @click="confirmReboot"><template #icon><SvgIcon name="power" /></template>重启服务器</n-button>
       </div>
     </div>
 
     <n-alert v-if="error" type="error" closable style="margin-bottom: 14px;" @close="error = ''">{{ error }}</n-alert>
     <n-alert v-if="success" type="success" closable style="margin-bottom: 14px;" @close="success = ''">{{ success }}</n-alert>
 
+    <div class="status-layout" :class="{ 'has-peers': peers.length }">
+    <div class="status-main">
     <div class="card-grid">
       <n-card title="组件运行状态" size="medium">
         <n-table :bordered="false" :single-line="false" size="small">
@@ -25,7 +27,7 @@
               </td>
               <td class="text-muted text-sm">{{ row.desc }}</td>
               <td>
-                <n-button class="table-btn" size="tiny" @click="restart(row.key)" :disabled="row.disableRestart">重启</n-button>
+                <n-button class="table-btn" size="tiny" @click="restart(row.key)" :disabled="row.disableRestart"><template #icon><SvgIcon name="refresh" /></template>重启</n-button>
               </td>
             </tr>
           </tbody>
@@ -68,40 +70,13 @@
           </tbody>
         </table>
       </n-card>
-
-      <n-card v-if="peers.length" size="medium">
-        <template #header>
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <span>WireGuard 实时网速</span>
-            <span class="text-muted text-sm">单位 KB/s</span>
-          </div>
-        </template>
-        <n-table :bordered="false" :single-line="false" size="small">
-          <thead>
-            <tr>
-              <th>Peer</th>
-              <th>分配 IP</th>
-              <th style="width: 120px;">↑ 上传</th>
-              <th style="width: 120px;">↓ 下载</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="p in peers" :key="p.id">
-              <td><strong>{{ p.name }}</strong></td>
-              <td class="text-mono text-sm">{{ p.address }}</td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
-              <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
-            </tr>
-          </tbody>
-        </n-table>
-      </n-card>
     </div>
 
     <n-card size="medium" style="margin-top: 16px;">
       <template #header>
         <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
           <span>节点管理</span>
-          <n-button size="small" type="primary" @click="openCreate">+ 添加节点</n-button>
+          <n-button size="small" type="primary" @click="openCreate"><template #icon><SvgIcon name="plus" /></template>添加节点</n-button>
         </div>
       </template>
       <n-empty v-if="nodes.length === 0" description="尚未添加任何节点。点击右上角「添加节点」开始。" />
@@ -121,8 +96,8 @@
             <td>
               <div class="row-actions">
                 <span class="text-mono">{{ idx + 1 }}</span>
-                <n-button class="table-btn" size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移">↑</n-button>
-                <n-button class="table-btn" size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移">↓</n-button>
+                <n-button class="table-btn" size="tiny" @click="moveUp(idx)" :disabled="idx === 0" title="上移"><template #icon><SvgIcon name="up" /></template></n-button>
+                <n-button class="table-btn" size="tiny" @click="moveDown(idx)" :disabled="idx === nodes.length - 1" title="下移"><template #icon><SvgIcon name="down" /></template></n-button>
               </div>
             </td>
             <td><strong>{{ n.name }}</strong></td>
@@ -135,16 +110,45 @@
             </td>
             <td>
               <div class="row-actions">
-                <n-button class="table-btn" size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId">切换</n-button>
-                <n-button class="table-btn" size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId">测试</n-button>
-                <n-button class="table-btn" size="tiny" @click="openEdit(n)">编辑</n-button>
-                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(n)">删除</n-button>
+                <n-button class="table-btn" size="tiny" type="primary" @click="switchTo(n)" :disabled="n.id === currentNodeId"><template #icon><SvgIcon name="switch" /></template>切换</n-button>
+                <n-button class="table-btn" size="tiny" @click="testNode(n)" :disabled="n.id !== currentNodeId"><template #icon><SvgIcon name="test" /></template>测试</n-button>
+                <n-button class="table-btn" size="tiny" @click="openEdit(n)"><template #icon><SvgIcon name="edit" /></template>编辑</n-button>
+                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(n)"><template #icon><SvgIcon name="trash" /></template>删除</n-button>
               </div>
             </td>
           </tr>
         </tbody>
       </n-table>
     </n-card>
+    </div>
+
+    <n-card v-if="peers.length" size="medium">
+      <template #header>
+        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <span>WireGuard 实时网速</span>
+          <span class="text-muted text-sm">单位 KB/s</span>
+        </div>
+      </template>
+      <n-table :bordered="false" :single-line="false" size="small">
+        <thead>
+          <tr>
+            <th>Peer</th>
+            <th>分配 IP</th>
+            <th style="width: 120px;">↑ 上传</th>
+            <th style="width: 120px;">↓ 下载</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="p in peers" :key="p.id">
+            <td><strong>{{ p.name }}</strong></td>
+            <td class="text-mono text-sm">{{ p.address }}</td>
+            <td class="text-mono">{{ getSpeed(p.public_key, 'tx') }} <span class="text-muted text-xs">KB/s</span></td>
+            <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-card>
+    </div>
 
     <!-- 添加/编辑节点 -->
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑节点' : '添加节点'" style="width: 540px;" :mask-closable="false">
@@ -194,7 +198,7 @@
       <template #footer>
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
           <n-button @click="closeModal">取消</n-button>
-          <n-button type="primary" :loading="saving" @click="saveNode">保存</n-button>
+          <n-button type="primary" :loading="saving" @click="saveNode"><template #icon><SvgIcon name="save" /></template>保存</n-button>
         </div>
       </template>
     </n-modal>
@@ -527,6 +531,21 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 左侧：组件 + 健康检查并排，节点管理在其下；有 peer 时右侧放 WG 网速，窄屏退回单列 */
+.status-layout {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+.status-main,
+.status-layout > * {
+  min-width: 0;
+}
+@media (min-width: 1200px) {
+  .status-layout.has-peers {
+    grid-template-columns: minmax(0, 1fr) 400px;
+  }
+}
 .is-current {
   background: rgba(77, 208, 225, 0.08);
 }

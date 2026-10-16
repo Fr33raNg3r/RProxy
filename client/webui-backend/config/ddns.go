@@ -25,6 +25,10 @@ type DDNSRecord struct {
 	Sub      string `json:"sub" yaml:"sub"`           // 子域名，如 home；根域名留空或填 @
 	AuthID   string `json:"auth_id" yaml:"auth_id"`   // 仅 DNSPod 使用（API ID）
 	Secret   string `json:"secret" yaml:"secret"`     // Cloudflare Token / DNSPod Token / NameSilo Key
+	// Email 仅 Cloudflare 使用：填了表示 Secret 是 Global API Key（X-Auth-Email 方式），留空表示 API Token
+	Email string `json:"email,omitempty" yaml:"email,omitempty"`
+	// SecretHint 只在返回给前端时由后端填充（密钥末 4 位），不落盘
+	SecretHint string `json:"secret_hint,omitempty" yaml:"-"`
 }
 
 // Complete 判断这条记录是否填写完整、可以生效：域名和密钥必填，DNSPod 还需要 API ID

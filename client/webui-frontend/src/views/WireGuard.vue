@@ -2,12 +2,6 @@
   <div>
     <div class="page-header">
       <h2>WireGuard 入站</h2>
-      <n-button type="primary"
-                :disabled="!wgEnabled"
-                :title="wgEnabled ? '' : '请先在下方启用 WireGuard 服务'"
-                @click="openCreate">
-        + 添加 Peer
-      </n-button>
     </div>
 
     <n-alert v-if="error" type="error" closable style="margin-bottom: 12px;" @close="error = ''">{{ error }}</n-alert>
@@ -37,7 +31,7 @@
             <div class="text-muted text-xs" style="margin-bottom: 6px;">监听端口</div>
             <n-input-group>
               <n-input-number v-model:value="wgPort" :min="1" :max="65535" style="width: 140px;" />
-              <n-button :loading="savingPort" @click="savePort">保存</n-button>
+              <n-button :loading="savingPort" @click="savePort"><template #icon><SvgIcon name="save" /></template>保存</n-button>
             </n-input-group>
           </div>
         </div>
@@ -68,7 +62,7 @@
         </div>
         <n-input-group>
           <n-input v-model:value="endpoint" placeholder="如 myhome.ddns.net 或 1.2.3.4" />
-          <n-button type="primary" :loading="savingEndpoint" :disabled="!wgEnabled" @click="saveEndpoint">保存</n-button>
+          <n-button type="primary" :loading="savingEndpoint" :disabled="!wgEnabled" @click="saveEndpoint"><template #icon><SvgIcon name="save" /></template>保存</n-button>
         </n-input-group>
         <div v-if="endpointMsg" class="text-sm" style="margin-top: 8px; color: #4ade80;">{{ endpointMsg }}</div>
       </n-card>
@@ -77,7 +71,16 @@
     <n-card size="medium" style="margin-top: 16px;">
       <template #header>
         <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-          <span>Peer 列表</span>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span>Peer 列表</span>
+            <n-button size="small" type="primary"
+                      :disabled="!wgEnabled"
+                      :title="wgEnabled ? '' : '请先在上方启用 WireGuard 服务'"
+                      @click="openCreate">
+              <template #icon><SvgIcon name="plus" /></template>
+              添加 Peer
+            </n-button>
+          </div>
           <span class="text-muted text-sm">实时网速（KB/s）</span>
         </div>
       </template>
@@ -100,8 +103,8 @@
             <td class="text-mono">{{ getSpeed(p.public_key, 'rx') }} <span class="text-muted text-xs">KB/s</span></td>
             <td>
               <div class="row-actions">
-                <n-button class="table-btn" size="tiny" @click="showQR(p)">配置 / 二维码</n-button>
-                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(p)">删除</n-button>
+                <n-button class="table-btn" size="tiny" @click="showQR(p)"><template #icon><SvgIcon name="qr" /></template>配置 / 二维码</n-button>
+                <n-button class="table-btn" size="tiny" type="error" @click="confirmDelete(p)"><template #icon><SvgIcon name="trash" /></template>删除</n-button>
               </div>
             </td>
           </tr>
@@ -122,7 +125,7 @@
       <template #footer>
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
           <n-button @click="showCreate = false">取消</n-button>
-          <n-button type="primary" :loading="creating" @click="createPeer">创建</n-button>
+          <n-button type="primary" :loading="creating" @click="createPeer"><template #icon><SvgIcon name="plus" /></template>创建</n-button>
         </div>
       </template>
     </n-modal>
@@ -148,7 +151,7 @@
       />
       <template #footer>
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
-          <n-button :disabled="!cfgText" @click="copyConfig">复制配置文件内容</n-button>
+          <n-button :disabled="!cfgText" @click="copyConfig"><template #icon><SvgIcon name="copy" /></template>复制配置文件内容</n-button>
           <n-button type="primary" @click="qrVisible = false">关闭</n-button>
         </div>
       </template>

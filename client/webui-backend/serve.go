@@ -111,10 +111,33 @@ func runServe() {
 	// ---------- 静态文件（Vue 构建产物） ----------
 	r.Get("/*", spaHandler)
 
+	// 同时在 443 提供 HTTPS（自签名证书），这样 http / https 访问都能正常登录；
+	// HTTPS 起不来不影响主端口
+	if cfg.ListenPort != httpsPort {
+		go serveHTTPS(r)
+	}
+
 	addr := fmt.Sprintf(":%d", cfg.ListenPort)
 	log.Printf("WebUI 监听 %s", addr)
 	if err := http.ListenAndServe(addr, r); err != nil {
 		log.Fatal(err)
+	}
+}
+
+const httpsPort = 443
+
+// serveHTTPS 在 443 端口用自签名证书提供同一套路由
+func serveHTTPS(h http.Handler) {
+	certPath := filepath.Join(config.InstallDir, "config", "tls.crt")
+	keyPath := filepath.Join(config.InstallDir, "config", "tls.key")
+	if err := ensureSelfSignedCert(certPath, keyPath); err != nil {
+		log.Printf("HTTPS 证书准备失败（仅提供 HTTP）: %v", err)
+		return
+	}
+	addr := fmt.Sprintf(":%d", httpsPort)
+	log.Printf("WebUI(HTTPS) 监听 %s", addr)
+	if err := http.ListenAndServeTLS(addr, certPath, keyPath, h); err != nil {
+		log.Printf("HTTPS 监听失败（仅提供 HTTP）: %v", err)
 	}
 }
 

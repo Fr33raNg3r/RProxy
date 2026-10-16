@@ -10,7 +10,7 @@
           <span v-if="!version.latest || version.latest === '未知'" class="text-muted">检查中…</span>
           <span v-else-if="version.has_update" style="color: #fbbf24;">v{{ version.latest }}</span>
           <span v-else style="color: #4ade80;">v{{ version.latest }}（已是最新）</span>
-          <n-button size="tiny" text @click="onRefreshLatest" :loading="refreshingLatest" style="margin-left: 6px;" title="重新检查">↻</n-button>
+          <n-button size="tiny" text @click="onRefreshLatest" :loading="refreshingLatest" style="margin-left: 6px;" title="重新检查"><template #icon><SvgIcon name="refresh" /></template></n-button>
         </div>
         <div v-if="version.has_update" class="brand-update">
           <n-button size="tiny" type="warning" :loading="upgrading" @click="onUpgrade">
@@ -26,7 +26,7 @@
         @update:value="onSelect"
       />
       <div class="sider-footer">
-        <n-button size="small" block secondary @click="logout">退出登录</n-button>
+        <n-button size="small" block secondary @click="logout"><template #icon><SvgIcon name="logout" /></template>退出登录</n-button>
       </div>
     </aside>
 
@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { api } from '../api'
@@ -98,6 +98,7 @@ const upgrading = ref(false)
 const refreshingLatest = ref(false)
 
 const upgradeModal = ref(false)
+const upgradeLogRef = ref(null)
 const upgradeLog = ref('')
 const upgradeOffset = ref(0)
 const upgradeFinished = ref(false)
@@ -185,7 +186,16 @@ async function pollUpgradeLog() {
   try {
     const data = await api.getUpgradeLog(upgradeOffset.value)
     if (data.content) {
+      // 追加前就在底部附近才自动滚动，用户往上翻看旧日志时不强行拉回
+      const el = upgradeLogRef.value?.textareaElRef
+      const stick = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 40
       upgradeLog.value += data.content
+      if (stick) {
+        nextTick(() => {
+          const e = upgradeLogRef.value?.textareaElRef
+          if (e) e.scrollTop = e.scrollHeight
+        })
+      }
     }
     if (typeof data.size === 'number') {
       upgradeOffset.value = data.size

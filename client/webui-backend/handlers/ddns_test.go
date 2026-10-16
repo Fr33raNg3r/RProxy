@@ -21,6 +21,26 @@ func TestMaskDDNSSecrets(t *testing.T) {
 	}
 }
 
+// 打码时带上密钥末 4 位提示，方便核对保存的是不是自己填的那个；短密钥不提示，避免泄露过多
+func TestMaskDDNSSecretsAddsLast4Hint(t *testing.T) {
+	out := maskDDNSSecrets(config.DDNSConfig{Records: []config.DDNSRecord{
+		{ID: "1", Secret: "abcdefgh1234"},
+		{ID: "2", Secret: "short"},
+	}})
+	if out.Records[0].SecretHint != "1234" || out.Records[1].SecretHint != "" {
+		t.Fatalf("提示不符: %+v", out.Records)
+	}
+}
+
+// 前端会把提示原样提交回来，合并后不能落盘
+func TestMergeDDNSSecretsDropsHint(t *testing.T) {
+	in := config.DDNSConfig{Records: []config.DDNSRecord{{ID: "1", Secret: "new-secret-key", SecretHint: "9999"}}}
+	out := mergeDDNSSecrets(in, config.DDNSConfig{})
+	if out.Records[0].SecretHint != "" {
+		t.Fatalf("提示不应保留: %+v", out.Records[0])
+	}
+}
+
 func TestMergeDDNSSecretsKeepsOldWhenMasked(t *testing.T) {
 	old := config.DDNSConfig{Records: []config.DDNSRecord{{ID: "1", Secret: "old-secret"}}}
 	in := config.DDNSConfig{Records: []config.DDNSRecord{

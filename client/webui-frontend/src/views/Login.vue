@@ -14,7 +14,7 @@
           </n-form-item>
         </n-form>
         <n-checkbox v-model:checked="remember" style="margin-top: 4px;">记住我（30 天内免登录）</n-checkbox>
-        <n-button type="primary" block :loading="loading" style="margin-top: 14px;" @click="login">登录</n-button>
+        <n-button type="primary" block :loading="loading" style="margin-top: 14px;" @click="login"><template #icon><SvgIcon name="login" /></template>登录</n-button>
       </template>
 
       <template v-else>

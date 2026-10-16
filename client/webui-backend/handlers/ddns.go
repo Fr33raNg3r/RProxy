@@ -18,7 +18,11 @@ func maskDDNSSecrets(c config.DDNSConfig) config.DDNSConfig {
 	out := config.DDNSConfig{Records: make([]config.DDNSRecord, len(c.Records))}
 	copy(out.Records, c.Records)
 	for i := range out.Records {
-		if out.Records[i].Secret != "" {
+		if s := out.Records[i].Secret; s != "" {
+			// 太短的密钥不给提示，避免泄露过多
+			if len(s) >= 8 {
+				out.Records[i].SecretHint = s[len(s)-4:]
+			}
 			out.Records[i].Secret = secretMask
 		}
 	}
@@ -34,6 +38,7 @@ func mergeDDNSSecrets(in, old config.DDNSConfig) config.DDNSConfig {
 	out := config.DDNSConfig{Records: make([]config.DDNSRecord, len(in.Records))}
 	copy(out.Records, in.Records)
 	for i := range out.Records {
+		out.Records[i].SecretHint = "" // 提示只用于展示，不保存
 		if out.Records[i].Secret == secretMask {
 			out.Records[i].Secret = oldByID[out.Records[i].ID]
 		}
@@ -51,6 +56,7 @@ func validateDDNSConfig(c *config.DDNSConfig) error {
 		r.Domain = strings.TrimSpace(r.Domain)
 		r.Sub = strings.TrimSpace(r.Sub)
 		r.AuthID = strings.TrimSpace(r.AuthID)
+		r.Email = strings.TrimSpace(r.Email)
 		r.Secret = strings.TrimSpace(r.Secret)
 		if r.Domain == "" && r.Sub == "" && r.AuthID == "" && r.Secret == "" {
 			continue

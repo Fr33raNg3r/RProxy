@@ -5,7 +5,7 @@
       <div class="row-actions">
         <n-select v-model:value="component" :options="componentOpts" style="width: 180px;" />
         <n-select v-model:value="lines" :options="lineOpts" style="width: 140px;" />
-        <n-button :loading="loading" @click="load">刷新</n-button>
+        <n-button :loading="loading" @click="load"><template #icon><SvgIcon name="refresh" /></template>刷新</n-button>
       </div>
     </div>
 

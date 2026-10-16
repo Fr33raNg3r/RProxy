@@ -101,7 +101,7 @@ func syncRecords(recs []config.DDNSRecord, ip string, last map[string]string,
 		if !r.Complete() {
 			continue
 		}
-		fp := strings.Join([]string{r.Provider, r.Domain, r.Sub, ip}, "|")
+		fp := strings.Join([]string{r.Provider, r.Domain, r.Sub, r.Email, ip}, "|")
 		if last[r.ID] == fp {
 			continue
 		}
@@ -150,7 +150,8 @@ type cfResp struct {
 	Result json.RawMessage `json:"result"`
 }
 
-func cloudflareCall(token, method, path string, query url.Values, body interface{}) (json.RawMessage, error) {
+// cloudflareCall 发起一次 API 请求：email 非空按 Global API Key 认证，否则按 API Token（Bearer）认证
+func cloudflareCall(email, token, method, path string, query url.Values, body interface{}) (json.RawMessage, error) {
 	u := cloudflareBase + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -164,7 +165,12 @@ func cloudflareCall(token, method, path string, query url.Values, body interface
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if email != "" {
+		req.Header.Set("X-Auth-Email", email)
+		req.Header.Set("X-Auth-Key", token)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := ddnsHTTP.Do(req)
 	if err != nil {
@@ -186,7 +192,7 @@ func cloudflareCall(token, method, path string, query url.Values, body interface
 }
 
 func cloudflareUpsert(r config.DDNSRecord, ip string) error {
-	raw, err := cloudflareCall(r.Secret, "GET", "/zones", url.Values{"name": {r.Domain}}, nil)
+	raw, err := cloudflareCall(r.Email, r.Secret, "GET", "/zones", url.Values{"name": {r.Domain}}, nil)
 	if err != nil {
 		return err
 	}
@@ -199,7 +205,7 @@ func cloudflareUpsert(r config.DDNSRecord, ip string) error {
 	zone := zones[0].ID
 	name := fqdn(r.Domain, r.Sub)
 
-	raw, err = cloudflareCall(r.Secret, "GET", "/zones/"+zone+"/dns_records",
+	raw, err = cloudflareCall(r.Email, r.Secret, "GET", "/zones/"+zone+"/dns_records",
 		url.Values{"type": {"A"}, "name": {name}}, nil)
 	if err != nil {
 		return err
@@ -213,9 +219,9 @@ func cloudflareUpsert(r config.DDNSRecord, ip string) error {
 		"type": "A", "name": name, "content": ip, "ttl": ddnsTTL, "proxied": false,
 	}
 	if len(recs) > 0 {
-		_, err = cloudflareCall(r.Secret, "PUT", "/zones/"+zone+"/dns_records/"+recs[0].ID, nil, body)
+		_, err = cloudflareCall(r.Email, r.Secret, "PUT", "/zones/"+zone+"/dns_records/"+recs[0].ID, nil, body)
 	} else {
-		_, err = cloudflareCall(r.Secret, "POST", "/zones/"+zone+"/dns_records", nil, body)
+		_, err = cloudflareCall(r.Email, r.Secret, "POST", "/zones/"+zone+"/dns_records", nil, body)
 	}
 	return err
 }

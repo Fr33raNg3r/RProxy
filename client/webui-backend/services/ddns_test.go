@@ -152,6 +152,35 @@ func TestCloudflareUpdatesExistingRecord(t *testing.T) {
 	}
 }
 
+// 填了登录邮箱时按 Global API Key 方式认证（X-Auth-Email + X-Auth-Key），不能再发 Bearer
+func TestCloudflareGlobalKeyUsesEmailHeaders(t *testing.T) {
+	var gotAuth, gotEmail, gotKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotEmail = r.Header.Get("X-Auth-Email")
+		gotKey = r.Header.Get("X-Auth-Key")
+		switch {
+		case r.URL.Path == "/zones":
+			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"Z1"}]}`))
+		case r.Method == "GET":
+			_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"success":true,"result":{"id":"R1"}}`))
+		}
+	}))
+	defer srv.Close()
+	defer swap(&cloudflareBase, srv.URL)()
+
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Sub: "h",
+		Email: "me@example.com", Secret: "GLOBALKEY"}, "5.5.5.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotEmail != "me@example.com" || gotKey != "GLOBALKEY" || gotAuth != "" {
+		t.Errorf("认证头不符: email=%q key=%q auth=%q", gotEmail, gotKey, gotAuth)
+	}
+}
+
 func TestCloudflareCreatesMissingRecordAtApex(t *testing.T) {
 	var gotMethod, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

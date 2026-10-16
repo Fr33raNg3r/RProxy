@@ -24,7 +24,7 @@
             </div>
           </n-form-item>
         </n-form>
-        <n-button type="primary" :loading="saving" style="margin-top: 4px;" @click="saveSettings">保存设置</n-button>
+        <n-button type="primary" :loading="saving" style="margin-top: 4px;" @click="saveSettings"><template #icon><SvgIcon name="save" /></template>保存设置</n-button>
 
         <n-divider />
 
@@ -40,7 +40,7 @@
             <n-input v-model:value="confirmPwd" type="password" show-password-on="click" />
           </n-form-item>
         </n-form>
-        <n-button type="primary" :loading="changingPwd" style="margin-top: 4px;" @click="changePwd">修改密码</n-button>
+        <n-button type="primary" :loading="changingPwd" style="margin-top: 4px;" @click="changePwd"><template #icon><SvgIcon name="key" /></template>修改密码</n-button>
       </n-card>
 
       <n-card title="本机网络（IP / 网关）" size="medium">
@@ -60,7 +60,7 @@
             <n-input v-model:value="lan.lan_gateway" placeholder="如 192.168.1.1" style="width: 240px;" />
           </n-form-item>
         </n-form>
-        <n-button type="warning" :loading="savingLan" style="margin-top: 16px;" @click="saveLan">保存并应用网络配置</n-button>
+        <n-button type="warning" :loading="savingLan" style="margin-top: 16px;" @click="saveLan"><template #icon><SvgIcon name="save" /></template>保存并应用网络配置</n-button>
       </n-card>
 
       <n-card title="配置导入/导出与紧急操作" size="medium">
@@ -69,8 +69,8 @@
           导入会替换上述配置并重启 Xray/mosdns/WireGuard。<strong>文件包含 WireGuard 私钥和 DDNS 密钥，请妥善保管；不含登录密码、session。</strong>
         </div>
         <div class="row-actions">
-          <n-button type="primary" @click="exportConfig">导出 YAML</n-button>
-          <n-button :loading="importing" @click="$refs.cfgFile.click()">导入 YAML</n-button>
+          <n-button type="primary" @click="exportConfig"><template #icon><SvgIcon name="download" /></template>导出 YAML</n-button>
+          <n-button :loading="importing" @click="$refs.cfgFile.click()"><template #icon><SvgIcon name="upload" /></template>导入 YAML</n-button>
           <input ref="cfgFile" type="file" accept=".yaml,.yml,text/yaml" style="display:none" @change="onImportFile" />
         </div>
         <n-alert v-if="importResult" type="success" :show-icon="false" style="margin-top: 14px;">{{ importResult }}</n-alert>
@@ -83,8 +83,8 @@
           对应脚本：<code>/opt/tproxy-gw/scripts/emergency-stop.sh</code> / <code>emergency-resume.sh</code>
         </div>
         <div class="row-actions">
-          <n-button type="error" :loading="stopping" :disabled="resuming" @click="emergencyStop">紧急停止</n-button>
-          <n-button type="primary" :loading="resuming" :disabled="stopping" @click="emergencyResume">恢复透明代理</n-button>
+          <n-button type="error" :loading="stopping" :disabled="resuming" @click="emergencyStop"><template #icon><SvgIcon name="stop" /></template>紧急停止</n-button>
+          <n-button type="primary" :loading="resuming" :disabled="stopping" @click="emergencyResume"><template #icon><SvgIcon name="play" /></template>恢复透明代理</n-button>
         </div>
         <pre v-if="stopOutput" class="log-output" style="margin-top: 14px;">{{ stopOutput }}</pre>
       </n-card>

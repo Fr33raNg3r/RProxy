@@ -3,8 +3,8 @@
     <div class="page-header">
       <h2>DDNS</h2>
       <div style="display: flex; gap: 12px;">
-        <n-button :loading="running" @click="runNow">立即更新</n-button>
-        <n-button type="primary" :loading="saving" @click="save">保存</n-button>
+        <n-button :loading="running" @click="runNow"><template #icon><SvgIcon name="refresh" /></template>立即更新</n-button>
+        <n-button type="primary" :loading="saving" @click="save"><template #icon><SvgIcon name="save" /></template>保存</n-button>
       </div>
     </div>
 
@@ -31,7 +31,11 @@
           <n-input v-model:value="r.sub" placeholder="子域名，如 home（根域名留空）" />
           <n-input v-model:value="r.domain" placeholder="主域名，如 example.com" />
           <n-input v-if="r.provider === 'dnspod'" v-model:value="r.auth_id" placeholder="API ID" />
+          <n-input v-if="r.provider === 'cloudflare'" v-model:value="r.email" placeholder="登录邮箱（仅 Global API Key 需要；用 API Token 请留空）" />
           <n-input v-model:value="r.secret" type="password" show-password-on="click" :placeholder="secretHint(r.provider)" />
+          <div v-if="r.secret === '******' && r.secret_hint" class="text-muted text-sm">
+            已保存，密钥末 4 位：<span class="text-mono">{{ r.secret_hint }}</span>
+          </div>
         </div>
         <div v-if="statusOf(r).detail" class="text-sm"
              :style="{ marginTop: '10px', color: statusOf(r).type === 'error' ? '#f87171' : '' }">
@@ -56,7 +60,7 @@ const saving = ref(false)
 const running = ref(false)
 
 function secretHint(p) {
-  if (p === 'cloudflare') return 'API Token（需 DNS 编辑权限）'
+  if (p === 'cloudflare') return 'API Token（需 Zone:读取 + DNS:编辑权限），或 Global API Key'
   if (p === 'dnspod') return 'API Token'
   return 'API Key'
 }
