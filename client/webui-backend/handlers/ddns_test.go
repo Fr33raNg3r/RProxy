@@ -107,14 +107,14 @@ func TestValidateDDNSConfigBlankIsOKPartialIsRejected(t *testing.T) {
 	}
 
 	ok := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
-		{Provider: "dnspod", Domain: " a.com ", Sub: " h ", AuthID: "1", Secret: "t"},
+		{Provider: "dnspod", Domain: " H.A.com. ", AuthID: "1", Secret: "t"},
 	}})
 	if err := validateDDNSConfig(&ok); err != nil {
 		t.Fatalf("填全应通过，实际 %v", err)
 	}
 	for _, r := range ok.Records {
-		if r.Provider == "dnspod" && (r.Domain != "a.com" || r.Sub != "h") {
-			t.Errorf("应去掉首尾空格: %+v", r)
+		if r.Provider == "dnspod" && r.Domain != "h.a.com" {
+			t.Errorf("应去掉首尾空格和结尾的点，并转小写: %+v", r)
 		}
 	}
 }

@@ -541,9 +541,10 @@ onUnmounted(() => {
 .status-layout > * {
   min-width: 0;
 }
-@media (min-width: 1200px) {
+/* 左 3 : 右 2；右侧至少 360px。左侧要并排放两张小卡，所以窗口不够宽时先不分栏 */
+@media (min-width: 1400px) {
   .status-layout.has-peers {
-    grid-template-columns: minmax(0, 1fr) 400px;
+    grid-template-columns: minmax(0, 3fr) minmax(360px, 2fr);
   }
 }
 .is-current {

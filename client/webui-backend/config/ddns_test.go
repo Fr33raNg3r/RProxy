@@ -50,7 +50,7 @@ func TestNormalizeDDNSMigratesOldRecords(t *testing.T) {
 	for _, r := range got.Records {
 		byID[r.ID] = r
 	}
-	if byID["namesilo"].Domain != "old.com" || byID["namesilo"].Secret != "k1" {
+	if byID["namesilo"].Domain != "a.old.com" || byID["namesilo"].Secret != "k1" {
 		t.Errorf("namesilo 应取第一条: %+v", byID["namesilo"])
 	}
 	if byID["dnspod"].AuthID != "9" {
@@ -58,6 +58,32 @@ func TestNormalizeDDNSMigratesOldRecords(t *testing.T) {
 	}
 	if byID["cloudflare"].Domain != "" {
 		t.Errorf("cloudflare 应为空白卡片: %+v", byID["cloudflare"])
+	}
+}
+
+// 旧版本把子域名和主域名分开保存；现在只保留一个完整域名，读取时自动合并
+func TestNormalizeDDNSMergesLegacySubIntoDomain(t *testing.T) {
+	cases := []struct {
+		name, domain, sub, want string
+	}{
+		{"普通子域名", "example.com", "home", "home.example.com"},
+		{"根域名写 @", "example.com", "@", "example.com"},
+		{"根域名留空", "example.com", "", "example.com"},
+		{"已经是完整域名", "home.example.com", "", "home.example.com"},
+		{"多级后缀", "example.com.cn", "a.b", "a.b.example.com.cn"},
+	}
+	for _, c := range cases {
+		got := NormalizeDDNS(DDNSConfig{Records: []DDNSRecord{
+			{Provider: "cloudflare", Domain: c.domain, Sub: c.sub, Secret: "s"},
+		}})
+		if r := got.Records[0]; r.Domain != c.want || r.Sub != "" {
+			t.Errorf("%s: 得到 domain=%q sub=%q，期望 %q", c.name, r.Domain, r.Sub, c.want)
+		}
+		// 再规范化一次结果不变（幂等）
+		again := NormalizeDDNS(got)
+		if again.Records[0].Domain != c.want {
+			t.Errorf("%s: 二次规范化应不变，得到 %q", c.name, again.Records[0].Domain)
+		}
 	}
 }
 
@@ -72,7 +98,7 @@ func TestDDNSConfigRoundTripAndMissingFile(t *testing.T) {
 	}
 
 	in := NormalizeDDNS(DDNSConfig{Records: []DDNSRecord{
-		{Provider: "dnspod", Domain: "a.com", Sub: "h", AuthID: "9", Secret: "s"},
+		{Provider: "dnspod", Domain: "h.a.com", AuthID: "9", Secret: "s"},
 	}})
 	if err := SaveDDNSConfig(in); err != nil {
 		t.Fatal(err)
@@ -82,7 +108,7 @@ func TestDDNSConfigRoundTripAndMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range out.Records {
-		if r.Provider == "dnspod" && (r.Secret != "s" || r.AuthID != "9" || r.Domain != "a.com") {
+		if r.Provider == "dnspod" && (r.Secret != "s" || r.AuthID != "9" || r.Domain != "h.a.com") {
 			t.Fatalf("读回不一致: %+v", r)
 		}
 	}

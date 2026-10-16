@@ -101,7 +101,7 @@ func syncRecords(recs []config.DDNSRecord, ip string, last map[string]string,
 		if !r.Complete() {
 			continue
 		}
-		fp := strings.Join([]string{r.Provider, r.Domain, r.Sub, r.Email, ip}, "|")
+		fp := strings.Join([]string{r.Provider, r.Domain, r.Email, ip}, "|")
 		if last[r.ID] == fp {
 			continue
 		}
@@ -116,17 +116,79 @@ func syncRecords(recs []config.DDNSRecord, ip string, last map[string]string,
 
 // ---------- 厂商 API ----------
 
-// ddnsUpsert 把记录对应的 A 记录设置为 ip：有则改，无则增
+// ddnsUpsert 把记录对应的 A 记录设置为 ip：有则改，无则增。
+// r.Domain 是完整域名（如 home.example.com），其中哪一段是账号下的主域名由这里自动探测，
+// 探测结果缓存起来，之后每轮更新不再重复探测。
 func ddnsUpsert(r config.DDNSRecord, ip string) error {
+	var exists func(string) (bool, error)
+	var upsert func(config.DDNSRecord, string) error
 	switch r.Provider {
 	case "cloudflare":
-		return cloudflareUpsert(r, ip)
+		exists, upsert = cloudflareZoneExists(r), cloudflareUpsert
 	case "dnspod":
-		return dnspodUpsert(r, ip)
+		exists, upsert = dnspodZoneExists(r), dnspodUpsert
 	case "namesilo":
-		return namesiloUpsert(r, ip)
+		exists, upsert = namesiloZoneExists(r), namesiloUpsert
+	default:
+		return fmt.Errorf("未知的 DNS 服务商: %q", r.Provider)
 	}
-	return fmt.Errorf("未知的 DNS 服务商: %q", r.Provider)
+
+	key := strings.Join([]string{r.Provider, r.Domain, r.Email}, "|")
+	ddnsZoneMu.Lock()
+	zone := ddnsZones[key]
+	ddnsZoneMu.Unlock()
+	if zone == "" {
+		var err error
+		if zone, err = detectZone(r.Domain, exists); err != nil {
+			return err
+		}
+	}
+
+	// 交给各厂商实现的记录：Domain 是主域名，Sub 是其前面的部分（根域名为空）
+	zr := r
+	zr.Domain = zone
+	zr.Sub = strings.TrimSuffix(strings.TrimSuffix(r.Domain, zone), ".")
+	err := upsert(zr, ip)
+
+	ddnsZoneMu.Lock()
+	defer ddnsZoneMu.Unlock()
+	if err != nil {
+		delete(ddnsZones, key) // 失败时丢掉缓存，下一轮重新探测（可能是域名被移走了）
+	} else {
+		ddnsZones[key] = zone
+	}
+	return err
+}
+
+// 探测到的主域名缓存：键为 厂商|完整域名|邮箱
+var (
+	ddnsZoneMu sync.Mutex
+	ddnsZones  = map[string]string{}
+)
+
+// zoneCandidates 返回完整域名可能的主域名，从最长到最短，至少保留两段
+// （home.example.com.cn → home.example.com.cn / example.com.cn / com.cn）
+func zoneCandidates(full string) []string {
+	labels := strings.Split(full, ".")
+	var out []string
+	for i := 0; len(labels)-i >= 2; i++ {
+		out = append(out, strings.Join(labels[i:], "."))
+	}
+	return out
+}
+
+// detectZone 依次询问各候选是否是账号下的域名，返回第一个命中的
+func detectZone(full string, exists func(string) (bool, error)) (string, error) {
+	for _, z := range zoneCandidates(full) {
+		ok, err := exists(z)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return z, nil
+		}
+	}
+	return "", fmt.Errorf("账号下找不到 %s 对应的主域名，请确认域名已托管在该服务商且密钥有权限", full)
 }
 
 // isApex 判断是否为根域名记录
@@ -191,6 +253,23 @@ func cloudflareCall(email, token, method, path string, query url.Values, body in
 	return out.Result, nil
 }
 
+// cloudflareZoneExists 返回"按名称查 zone"的探测函数
+func cloudflareZoneExists(r config.DDNSRecord) func(string) (bool, error) {
+	return func(zone string) (bool, error) {
+		raw, err := cloudflareCall(r.Email, r.Secret, "GET", "/zones", url.Values{"name": {zone}}, nil)
+		if err != nil {
+			return false, err
+		}
+		var zones []struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(raw, &zones); err != nil {
+			return false, nil
+		}
+		return len(zones) > 0, nil
+	}
+}
+
 func cloudflareUpsert(r config.DDNSRecord, ip string) error {
 	raw, err := cloudflareCall(r.Email, r.Secret, "GET", "/zones", url.Values{"name": {r.Domain}}, nil)
 	if err != nil {
@@ -239,6 +318,9 @@ type dnspodResp struct {
 		Type  string `json:"type"`
 		Value string `json:"value"`
 	} `json:"records"`
+	Domains []struct {
+		Name string `json:"name"`
+	} `json:"domains"`
 }
 
 func dnspodCall(r config.DDNSRecord, action string, form url.Values) (*dnspodResp, error) {
@@ -255,6 +337,29 @@ func dnspodCall(r config.DDNSRecord, action string, form url.Values) (*dnspodRes
 		return nil, fmt.Errorf("DNSPod 响应解析失败(HTTP %d): %w", resp.StatusCode, err)
 	}
 	return &out, nil
+}
+
+// dnspodZoneExists 返回探测函数：第一次调用时拉取账号下的域名列表，之后在列表里匹配
+func dnspodZoneExists(r config.DDNSRecord) func(string) (bool, error) {
+	var names map[string]bool
+	return func(zone string) (bool, error) {
+		if names == nil {
+			lr := r
+			lr.Domain = ""
+			out, err := dnspodCall(lr, "Domain.List", url.Values{})
+			if err != nil {
+				return false, err
+			}
+			if out.Status.Code != "1" {
+				return false, fmt.Errorf("DNSPod: %s (code %s)", out.Status.Message, out.Status.Code)
+			}
+			names = map[string]bool{}
+			for _, d := range out.Domains {
+				names[strings.ToLower(d.Name)] = true
+			}
+		}
+		return names[zone], nil
+	}
 }
 
 func dnspodUpsert(r config.DDNSRecord, ip string) error {
@@ -301,8 +406,9 @@ func dnspodUpsert(r config.DDNSRecord, ip string) error {
 
 type namesiloResp struct {
 	Reply struct {
-		Code    int    `xml:"code"`
-		Detail  string `xml:"detail"`
+		Code    int      `xml:"code"`
+		Detail  string   `xml:"detail"`
+		Domains []string `xml:"domains>domain"`
 		Records []struct {
 			ID    string `xml:"record_id"`
 			Type  string `xml:"type"`
@@ -316,7 +422,9 @@ func namesiloCall(r config.DDNSRecord, action string, q url.Values) (*namesiloRe
 	q.Set("version", "1")
 	q.Set("type", "xml")
 	q.Set("key", r.Secret)
-	q.Set("domain", r.Domain)
+	if r.Domain != "" {
+		q.Set("domain", r.Domain)
+	}
 	resp, err := ddnsHTTP.Get(namesiloBase + "/" + action + "?" + q.Encode())
 	if err != nil {
 		return nil, err
@@ -330,6 +438,26 @@ func namesiloCall(r config.DDNSRecord, action string, q url.Values) (*namesiloRe
 		return nil, fmt.Errorf("NameSilo: %s (code %d)", out.Reply.Detail, out.Reply.Code)
 	}
 	return &out, nil
+}
+
+// namesiloZoneExists 返回探测函数：第一次调用时拉取账号下的域名列表，之后在列表里匹配
+func namesiloZoneExists(r config.DDNSRecord) func(string) (bool, error) {
+	var names map[string]bool
+	return func(zone string) (bool, error) {
+		if names == nil {
+			lr := r
+			lr.Domain = ""
+			out, err := namesiloCall(lr, "listDomains", url.Values{})
+			if err != nil {
+				return false, err
+			}
+			names = map[string]bool{}
+			for _, d := range out.Reply.Domains {
+				names[strings.ToLower(strings.TrimSpace(d))] = true
+			}
+		}
+		return names[zone], nil
+	}
 }
 
 func namesiloUpsert(r config.DDNSRecord, ip string) error {

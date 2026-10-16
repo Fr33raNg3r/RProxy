@@ -28,8 +28,7 @@
           </div>
         </template>
         <div style="display: flex; flex-direction: column; gap: 10px;">
-          <n-input v-model:value="r.sub" placeholder="子域名，如 home（根域名留空）" />
-          <n-input v-model:value="r.domain" placeholder="主域名，如 example.com" />
+          <n-input v-model:value="r.domain" placeholder="完整域名，如 home.example.com（根域名填 example.com）" />
           <n-input v-if="r.provider === 'dnspod'" v-model:value="r.auth_id" placeholder="API ID" />
           <n-input v-if="r.provider === 'cloudflare'" v-model:value="r.email" placeholder="登录邮箱（仅 Global API Key 需要；用 API Token 请留空）" />
           <n-input v-model:value="r.secret" type="password" show-password-on="click" :placeholder="secretHint(r.provider)" />

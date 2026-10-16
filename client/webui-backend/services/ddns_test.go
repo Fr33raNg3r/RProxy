@@ -117,8 +117,10 @@ func TestCloudflareUpdatesExistingRecord(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		switch {
 		case r.URL.Path == "/zones":
+			// 完整域名 home.example.com 先被当作 zone 查询（查不到），再退一级查 example.com
 			if r.URL.Query().Get("name") != "example.com" {
-				t.Errorf("zone name = %q", r.URL.Query().Get("name"))
+				_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+				return
 			}
 			_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"Z1"}]}`))
 		case r.URL.Path == "/zones/Z1/dns_records" && r.Method == "GET":
@@ -135,7 +137,7 @@ func TestCloudflareUpdatesExistingRecord(t *testing.T) {
 	defer srv.Close()
 	defer swap(&cloudflareBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Sub: "home", Secret: "TOK"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "home.example.com", Secret: "TOK"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +173,7 @@ func TestCloudflareGlobalKeyUsesEmailHeaders(t *testing.T) {
 	defer srv.Close()
 	defer swap(&cloudflareBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Sub: "h",
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "h.example.com",
 		Email: "me@example.com", Secret: "GLOBALKEY"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +203,7 @@ func TestCloudflareCreatesMissingRecordAtApex(t *testing.T) {
 	defer srv.Close()
 	defer swap(&cloudflareBase, srv.URL)()
 
-	if err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Sub: "@", Secret: "T"}, "5.5.5.5"); err != nil {
+	if err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Secret: "T"}, "5.5.5.5"); err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != "POST" || !strings.Contains(gotBody, `"name":"example.com"`) {
@@ -216,7 +218,7 @@ func TestCloudflareReportsAPIError(t *testing.T) {
 	defer srv.Close()
 	defer swap(&cloudflareBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "example.com", Sub: "h", Secret: "bad"}, "1.1.1.1")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "h.example.com", Secret: "bad"}, "1.1.1.1")
 	if err == nil || !strings.Contains(err.Error(), "Invalid access token") {
 		t.Fatalf("应带出 Cloudflare 的错误信息，实际 %v", err)
 	}
@@ -227,6 +229,10 @@ func TestCloudflareReportsAPIError(t *testing.T) {
 func dnspodServer(listResp string, calls *[]url.Values, paths *[]string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		if r.URL.Path == "/Domain.List" {
+			_, _ = w.Write([]byte(`{"status":{"code":"1"},"domains":[{"name":"example.com"},{"name":"other.org"}]}`))
+			return
+		}
 		*calls = append(*calls, r.PostForm)
 		*paths = append(*paths, r.URL.Path)
 		if r.URL.Path == "/Record.List" {
@@ -244,7 +250,7 @@ func TestDNSPodModifiesExistingRecord(t *testing.T) {
 	defer srv.Close()
 	defer swap(&dnspodBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "example.com", Sub: "home", AuthID: "123", Secret: "tok"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "home.example.com", AuthID: "123", Secret: "tok"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +270,7 @@ func TestDNSPodCreatesWhenListEmpty(t *testing.T) {
 	defer srv.Close()
 	defer swap(&dnspodBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "example.com", Sub: "", AuthID: "1", Secret: "t"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "example.com", AuthID: "1", Secret: "t"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +289,7 @@ func TestDNSPodReportsAPIError(t *testing.T) {
 	defer srv.Close()
 	defer swap(&dnspodBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "example.com", Sub: "h", AuthID: "1", Secret: "t"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "h.example.com", AuthID: "1", Secret: "t"}, "5.5.5.5")
 	if err == nil || !strings.Contains(err.Error(), "登录失败") {
 		t.Fatalf("应带出 DNSPod 的错误信息，实际 %v", err)
 	}
@@ -293,6 +299,10 @@ func TestDNSPodReportsAPIError(t *testing.T) {
 
 func namesiloServer(listXML string, last *url.Values, lastPath *string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/listDomains" {
+			_, _ = w.Write([]byte(`<namesilo><reply><code>300</code><detail>success</detail><domains><domain>example.com</domain><domain>other.org</domain></domains></reply></namesilo>`))
+			return
+		}
 		if r.URL.Path == "/dnsListRecords" {
 			_, _ = w.Write([]byte(listXML))
 			return
@@ -312,7 +322,7 @@ func TestNameSiloUpdatesExistingRecord(t *testing.T) {
 	defer srv.Close()
 	defer swap(&namesiloBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "example.com", Sub: "home", Secret: "KEY"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "home.example.com", Secret: "KEY"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +339,7 @@ func TestNameSiloAddsMissingRecord(t *testing.T) {
 	defer srv.Close()
 	defer swap(&namesiloBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "example.com", Sub: "", Secret: "KEY"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "example.com", Secret: "KEY"}, "5.5.5.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,9 +355,123 @@ func TestNameSiloReportsAPIError(t *testing.T) {
 	defer srv.Close()
 	defer swap(&namesiloBase, srv.URL)()
 
-	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "example.com", Sub: "h", Secret: "x"}, "5.5.5.5")
+	err := ddnsUpsert(config.DDNSRecord{Provider: "namesilo", Domain: "h.example.com", Secret: "x"}, "5.5.5.5")
 	if err == nil || !strings.Contains(err.Error(), "Invalid API Key") {
 		t.Fatalf("应带出 NameSilo 的错误信息，实际 %v", err)
+	}
+}
+
+// ---------- 主域名自动探测 ----------
+
+func TestZoneCandidatesLongestFirstKeepsTwoLabels(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"example.com", []string{"example.com"}},
+		{"home.example.com", []string{"home.example.com", "example.com"}},
+		{"a.example.com.cn", []string{"a.example.com.cn", "example.com.cn", "com.cn"}},
+		{"localhost", nil},
+	}
+	for _, c := range cases {
+		got := zoneCandidates(c.in)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("zoneCandidates(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// 多级后缀（.com.cn）必须选中账号里真实存在的 example.com.cn，而不是切成 com.cn
+func TestCloudflareDetectsMultiLabelSuffixZone(t *testing.T) {
+	var recordQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/zones":
+			if r.URL.Query().Get("name") == "example.com.cn" {
+				_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"ZCN"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+		case r.URL.Path == "/zones/ZCN/dns_records" && r.Method == "GET":
+			recordQuery = r.URL.Query().Get("name")
+			_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"success":true,"result":{}}`))
+		}
+	}))
+	defer srv.Close()
+	defer swap(&cloudflareBase, srv.URL)()
+
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "nas.home.example.com.cn", Secret: "T"}, "5.5.5.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recordQuery != "nas.home.example.com.cn" {
+		t.Errorf("记录名应为完整域名，实际 %q", recordQuery)
+	}
+}
+
+func TestCloudflareZoneNotFoundReportsClearError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+	}))
+	defer srv.Close()
+	defer swap(&cloudflareBase, srv.URL)()
+
+	err := ddnsUpsert(config.DDNSRecord{Provider: "cloudflare", Domain: "nozone.example.net", Secret: "T"}, "1.1.1.1")
+	if err == nil || !strings.Contains(err.Error(), "找不到") || !strings.Contains(err.Error(), "nozone.example.net") {
+		t.Fatalf("应提示找不到主域名，实际 %v", err)
+	}
+}
+
+// 探测到的主域名会缓存，之后每轮更新不再重复探测
+func TestZoneDetectionIsCached(t *testing.T) {
+	zoneCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/zones":
+			zoneCalls++
+			if r.URL.Query().Get("name") == "cache.example.org" {
+				_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"Z9"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+		case r.Method == "GET":
+			_, _ = w.Write([]byte(`{"success":true,"result":[]}`))
+		default:
+			_, _ = w.Write([]byte(`{"success":true,"result":{}}`))
+		}
+	}))
+	defer srv.Close()
+	defer swap(&cloudflareBase, srv.URL)()
+
+	rec := config.DDNSRecord{Provider: "cloudflare", Domain: "www.cache.example.org", Secret: "T"}
+	if err := ddnsUpsert(rec, "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	first := zoneCalls
+	if err := ddnsUpsert(rec, "2.2.2.2"); err != nil {
+		t.Fatal(err)
+	}
+	// 第二轮只剩 cloudflareUpsert 自己查 zone 的那一次，不再逐级探测
+	if zoneCalls-first != 1 {
+		t.Errorf("第二轮 /zones 请求应只有 1 次，实际 %d（首轮 %d）", zoneCalls-first, first)
+	}
+}
+
+func TestDNSPodDomainNotInAccount(t *testing.T) {
+	var calls []url.Values
+	var paths []string
+	srv := dnspodServer(`{"status":{"code":"1"}}`, &calls, &paths)
+	defer srv.Close()
+	defer swap(&dnspodBase, srv.URL)()
+
+	err := ddnsUpsert(config.DDNSRecord{Provider: "dnspod", Domain: "x.notmine.com", AuthID: "1", Secret: "t"}, "1.1.1.1")
+	if err == nil || !strings.Contains(err.Error(), "找不到") {
+		t.Fatalf("账号下没有该域名应报错，实际 %v", err)
+	}
+	if len(paths) != 0 {
+		t.Errorf("找不到主域名时不应继续调用记录接口: %v", paths)
 	}
 }
 

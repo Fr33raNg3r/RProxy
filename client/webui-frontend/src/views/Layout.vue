@@ -81,7 +81,8 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, h, nextTick, onMounted, onUnmounted } from 'vue'
+import SvgIcon from '../components/SvgIcon.vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useDialog, useMessage } from 'naive-ui'
 import { api } from '../api'
@@ -108,13 +109,14 @@ let upgradePollTimer = null
 let upgradeNotifiedDone = false
 let preUpgradeVersion = ''
 
+const menuIcon = (name) => () => h(SvgIcon, { name })
 const menuOptions = [
-  { label: '系统状态', key: '/status' },
-  { label: 'WireGuard', key: '/wireguard' },
-  { label: 'DNS 规则', key: '/dns' },
-  { label: 'DDNS', key: '/ddns' },
-  { label: '设置', key: '/settings' },
-  { label: '日志', key: '/logs' }
+  { label: '系统状态', key: '/status', icon: menuIcon('activity') },
+  { label: 'WireGuard', key: '/wireguard', icon: menuIcon('shield') },
+  { label: 'DNS 规则', key: '/dns', icon: menuIcon('globe') },
+  { label: 'DDNS', key: '/ddns', icon: menuIcon('cloud') },
+  { label: '设置', key: '/settings', icon: menuIcon('settings') },
+  { label: '日志', key: '/logs', icon: menuIcon('file') }
 ]
 
 const activeKey = computed(() => '/' + (route.path.split('/')[1] || 'status'))

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -21,10 +22,11 @@ var DDNSProviders = []string{"cloudflare", "dnspod", "namesilo"}
 type DDNSRecord struct {
 	ID       string `json:"id" yaml:"id"`
 	Provider string `json:"provider" yaml:"provider"` // cloudflare / dnspod / namesilo
-	Domain   string `json:"domain" yaml:"domain"`     // 主域名，如 example.com
-	Sub      string `json:"sub" yaml:"sub"`           // 子域名，如 home；根域名留空或填 @
-	AuthID   string `json:"auth_id" yaml:"auth_id"`   // 仅 DNSPod 使用（API ID）
-	Secret   string `json:"secret" yaml:"secret"`     // Cloudflare Token / DNSPod Token / NameSilo Key
+	Domain   string `json:"domain" yaml:"domain"`     // 完整域名，如 home.example.com；主域名由后端自动探测
+	// Sub 是旧版本遗留字段（子域名），读取时由 NormalizeDDNS 合并进 Domain，之后恒为空
+	Sub    string `json:"sub,omitempty" yaml:"sub,omitempty"`
+	AuthID string `json:"auth_id" yaml:"auth_id"` // 仅 DNSPod 使用（API ID）
+	Secret string `json:"secret" yaml:"secret"`   // Cloudflare Token / DNSPod Token / NameSilo Key
 	// Email 仅 Cloudflare 使用：填了表示 Secret 是 Global API Key（X-Auth-Email 方式），留空表示 API Token
 	Email string `json:"email,omitempty" yaml:"email,omitempty"`
 	// SecretHint 只在返回给前端时由后端填充（密钥末 4 位），不落盘
@@ -63,6 +65,11 @@ func NormalizeDDNS(in DDNSConfig) DDNSConfig {
 		if pick != nil {
 			rec = *pick
 		}
+		// 旧版本把子域名单独存放：合并成完整域名（@ 或留空表示根域名）
+		if sub := strings.TrimSpace(rec.Sub); sub != "" && sub != "@" && rec.Domain != "" {
+			rec.Domain = sub + "." + rec.Domain
+		}
+		rec.Sub = ""
 		rec.ID = p
 		out.Records = append(out.Records, rec)
 	}

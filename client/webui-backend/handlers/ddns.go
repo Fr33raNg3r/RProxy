@@ -53,18 +53,17 @@ var ddnsLabels = map[string]string{"cloudflare": "Cloudflare", "dnspod": "DNSPod
 func validateDDNSConfig(c *config.DDNSConfig) error {
 	for i := range c.Records {
 		r := &c.Records[i]
-		r.Domain = strings.TrimSpace(r.Domain)
-		r.Sub = strings.TrimSpace(r.Sub)
+		r.Domain = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(r.Domain)), ".")
 		r.AuthID = strings.TrimSpace(r.AuthID)
 		r.Email = strings.TrimSpace(r.Email)
 		r.Secret = strings.TrimSpace(r.Secret)
-		if r.Domain == "" && r.Sub == "" && r.AuthID == "" && r.Secret == "" {
+		if r.Domain == "" && r.AuthID == "" && r.Secret == "" {
 			continue
 		}
 		label := ddnsLabels[r.Provider]
 		switch {
 		case r.Domain == "":
-			return fmt.Errorf("%s：请填写主域名", label)
+			return fmt.Errorf("%s：请填写域名", label)
 		case r.Provider == "dnspod" && r.AuthID == "":
 			return fmt.Errorf("%s：请填写 API ID", label)
 		case r.Secret == "":
