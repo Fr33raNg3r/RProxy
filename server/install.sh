@@ -87,7 +87,9 @@ migrate_legacy_tproxy() {
     # 立即部署新脚本 / 新命令 / 新 timer：升级中途失败时机器也能保持完整可用，且 timer 会在次日自动重试
     cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
-    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server
+    # 本机留存的 install.sh 也换成新版：升级若中途失败，rproxy-server upgrade 不会再用到旧脚本
+    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
+    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server "${INSTALL_DIR}/install.sh"
     # 旧命令名保留为指向新命令的软链接
     rm -f /usr/local/bin/tproxy-server
     ln -s /usr/local/bin/rproxy-server /usr/local/bin/tproxy-server
@@ -218,7 +220,8 @@ enable_ntp() {
     log_step "启用 NTP（chrony）"
     # chrony 与 systemd-timesyncd 互斥，安装时 apt 会自动卸载后者
     systemctl disable --now ntpsec 2>/dev/null || true
-    apt-get install -y --no-install-recommends chrony
+    # 升级流程也会走到这里：系统自动更新（unattended-upgrades 等）可能正占着 dpkg 锁，最多等 5 分钟
+    apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=300 chrony
     # 海外时间源；注释掉 Debian 默认 pool，避免混入其他源
     mkdir -p /etc/chrony/sources.d
     cat > /etc/chrony/sources.d/rproxy.sources <<'EOF'
@@ -738,7 +741,9 @@ action_upgrade() {
     # 部署新脚本（保留配置）
     cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
-    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server
+    # install.sh 本身也更新：rproxy-server upgrade 优先运行本机这份，不更新就会一直停在首次安装时的版本
+    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
+    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server "${INSTALL_DIR}/install.sh"
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload

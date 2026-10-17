@@ -97,7 +97,9 @@ migrate_legacy_tproxy() {
     # 后续升级流程要联网下载（依赖本机 mosdns 解析），且升级中途失败时也不会停在"服务全停"的状态。
     # WebUI 此时仍是旧二进制（经兼容软链接工作），升级末尾部署新二进制后会重启
     cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
-    chmod +x "${SCRIPTS_DIR}"/*.sh
+    # 本机留存的 install.sh 也换成新版：升级若中途失败，手动重跑它不会再用到旧脚本
+    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
+    chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
     cp "${BUILD_DIR}/configs/systemd/"*.service "${BUILD_DIR}/configs/systemd/"*.timer /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable rproxy-gw-load-cn-ips.service rproxy-gw-load-static-ips.service \
@@ -249,7 +251,8 @@ enable_ntp() {
     log_step "启用 NTP（chrony）"
     # 关闭其他可能冲突的 NTP 客户端（chrony 与 systemd-timesyncd 互斥，安装时 apt 会自动卸载后者）
     systemctl disable --now ntpsec 2>/dev/null || true
-    apt-get install -y --no-install-recommends chrony
+    # 升级流程也会走到这里：系统自动更新（unattended-upgrades 等）可能正占着 dpkg 锁，最多等 5 分钟
+    apt-get install -y --no-install-recommends -o DPkg::Lock::Timeout=300 chrony
     # 国内时间源；注释掉 Debian 默认 pool，避免混入其他源
     mkdir -p /etc/chrony/sources.d
     cat > /etc/chrony/sources.d/rproxy.sources <<'EOF'
