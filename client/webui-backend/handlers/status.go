@@ -36,7 +36,7 @@ func buildStatusResponse() map[string]interface{} {
 		"timestamp": time.Now().Format(time.RFC3339),
 		"services": map[string]interface{}{
 			"xray":   services.IsServiceActive("xray"),
-			"mosdns": services.IsServiceActive("tproxy-gw-mosdns"),
+			"mosdns": services.IsServiceActive("rproxy-gw-mosdns"),
 			"webui":  true, // 自己在跑
 			"wg":     services.IsServiceActive("wg-quick@wg0"),
 		},

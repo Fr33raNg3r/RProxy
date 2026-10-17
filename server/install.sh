@@ -13,7 +13,8 @@ set -e
 # ---------- 加载公共函数 ----------
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)"
 
-if [[ -f "${SELF_DIR}/scripts/common.sh" ]]; then
+# [迁移-1.5.0清理] 从旧安装目录直接运行时，同目录的 common.sh 是旧版（常量指向旧路径），必须改用远程最新版
+if [[ -f "${SELF_DIR}/scripts/common.sh" && "${SELF_DIR}" != "/opt/tproxy-server" ]]; then
     source "${SELF_DIR}/scripts/common.sh"
     LOCAL_MODE=1
 else
@@ -26,6 +27,81 @@ else
     rm -f "${TMP_COMMON}"
     LOCAL_MODE=0
 fi
+
+# ============================================================================
+# [迁移-1.5.0清理] 旧名称 tproxy-server → rproxy-server 迁移（1.4.7 引入，1.5.0 整段删除）
+# 由旧版的定时更新拉取本脚本执行，机器无需人工干预
+# ============================================================================
+LEGACY_INSTALL_DIR="/opt/tproxy-server"
+LEGACY_WEB_ROOT="/var/www/tproxy-server"
+LEGACY_SSL_DIR="/etc/ssl/tproxy-server"
+
+migrate_legacy_tproxy() {
+    # 旧目录是真实目录才需要迁移；已是软链接说明迁移过
+    [[ -d "$LEGACY_INSTALL_DIR" && ! -L "$LEGACY_INSTALL_DIR" ]] || return 0
+    [[ ! -e "$INSTALL_DIR" ]] || die "同时存在 ${LEGACY_INSTALL_DIR} 与 ${INSTALL_DIR}，无法自动迁移，请人工处理"
+
+    log_step "检测到旧版安装（tproxy-server），迁移为 rproxy-server"
+
+    # 先拉取新版产物：下载失败就在改动任何东西之前中止，系统保持原样
+    fetch_source
+    # 推送后 CI 约 1 分钟才生成新 release：此时拿到的"最新 release"可能仍是旧布局产物，不能用它迁移
+    [[ -f "${BUILD_DIR}/scripts/rproxy-server" ]] \
+        || die "最新 release 仍是旧版产物（新版可能正在发布），本次不迁移，下次更新时自动重试"
+
+    local bak="/var/backups/tproxy-server-pre-rproxy-$(date +%Y%m%d-%H%M%S).tar.gz"
+    mkdir -p /var/backups
+    log_info "备份旧安装到 ${bak}"
+    # 日志不进备份；tar 退出码 1 仅表示读取时文件被改动，备份有效，不应中止迁移
+    (cd / && { tar -czf "$bak" --exclude='opt/tproxy-server/logs' \
+        opt/tproxy-server var/www/tproxy-server etc/ssl/tproxy-server \
+        $(ls -d etc/nginx/conf.d/tproxy-server.conf usr/local/bin/tproxy-server \
+                etc/systemd/system/tproxy-server-* root/.acme.sh 2>/dev/null) \
+        || [[ $? -eq 1 ]]; })
+
+    log_info "停用旧的自动更新"
+    systemctl disable --now tproxy-server-update.timer 2>/dev/null || true
+    # update.service 可能正是调用本脚本的父进程，stop 会连带杀掉升级，只停用不停止
+    systemctl disable tproxy-server-update.service 2>/dev/null || true
+
+    log_info "搬迁目录并保留兼容软链接"
+    mv "$LEGACY_INSTALL_DIR" "$INSTALL_DIR"
+    ln -s "$INSTALL_DIR" "$LEGACY_INSTALL_DIR"
+    if [[ -d "$LEGACY_WEB_ROOT" && ! -L "$LEGACY_WEB_ROOT" ]]; then
+        mv "$LEGACY_WEB_ROOT" "$WEB_ROOT"
+        ln -s "$WEB_ROOT" "$LEGACY_WEB_ROOT"
+    fi
+    if [[ -d "$LEGACY_SSL_DIR" && ! -L "$LEGACY_SSL_DIR" ]]; then
+        mv "$LEGACY_SSL_DIR" "$SSL_DIR"
+        ln -s "$SSL_DIR" "$LEGACY_SSL_DIR"
+    fi
+
+    # acme.sh 续期时按其 conf 里记录的路径写证书、做 webroot 验证，必须同步改成新路径
+    grep -rIl 'tproxy-server' "${ACME_HOME}" --include='*.conf' 2>/dev/null \
+        | xargs -r sed -i -e "s#${LEGACY_WEB_ROOT}#${WEB_ROOT}#g" -e "s#${LEGACY_SSL_DIR}#${SSL_DIR}#g"
+
+    rm -f /etc/systemd/system/tproxy-server-update.service \
+          /etc/systemd/system/tproxy-server-update.timer \
+          /var/run/tproxy-server-update.lock
+
+    # 立即部署新脚本 / 新命令 / 新 timer：升级中途失败时机器也能保持完整可用，且 timer 会在次日自动重试
+    cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
+    cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
+    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server
+    # 旧命令名保留为指向新命令的软链接
+    rm -f /usr/local/bin/tproxy-server
+    ln -s /usr/local/bin/rproxy-server /usr/local/bin/tproxy-server
+    cp "${BUILD_DIR}/configs/systemd/"*.service "${BUILD_DIR}/configs/systemd/"*.timer /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now rproxy-server-update.timer 2>/dev/null || true
+
+    # 旧 nginx 站点配置指向已搬走的证书路径，必须删除；随即用新路径渲染新配置，避免 nginx 重启后站点丢失
+    rm -f /etc/nginx/conf.d/tproxy-server.conf
+    DOMAIN=$(json_get "${SERVER_CFG}" '.domain')
+    deploy_final_nginx
+
+    log_done "旧版已迁移为 rproxy-server（旧安装备份：${bak}）"
+}
 
 # ============================================================================
 # 主菜单
@@ -405,11 +481,11 @@ deploy_files() {
     cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
     chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
 
-    cp "${BUILD_DIR}/scripts/tproxy-server" /usr/local/bin/tproxy-server
-    chmod +x /usr/local/bin/tproxy-server
+    cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
+    chmod +x /usr/local/bin/rproxy-server
 
-    # 复制 nginx 模板到 scripts 目录，方便 tproxy-server change-domain 调用
-    cp "${BUILD_DIR}/configs/nginx/tproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
+    # 复制 nginx 模板到 scripts 目录，方便 rproxy-server change-domain 调用
+    cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
 
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
@@ -514,7 +590,7 @@ deploy_final_nginx() {
         -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
         -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
         -e "s|{{XRAY_PORT}}|${XRAY_LOCAL_PORT}|g" \
-        "${BUILD_DIR}/configs/nginx/tproxy-server.conf.tpl" \
+        "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" \
         > "${NGINX_CONF}"
 
     # PHP 版本检测，调整 socket 路径
@@ -558,7 +634,7 @@ EOF
 
 render_xray_config() {
     log_step "渲染 Xray 配置"
-    /usr/local/bin/tproxy-server _render-xray
+    /usr/local/bin/rproxy-server _render-xray
     log_done "Xray 配置已生成"
 }
 
@@ -585,7 +661,7 @@ start_services() {
 
 enable_auto_update() {
     log_step "启用每日自动更新（脚本+Xray+证书续期）"
-    systemctl enable --now tproxy-server-update.timer
+    systemctl enable --now rproxy-server-update.timer
     log_done "自动更新已启用（每日 04:05 检查）"
 }
 
@@ -597,6 +673,7 @@ action_install_fresh() {
     require_root
     check_arch
     check_debian13
+    migrate_legacy_tproxy         # [迁移-1.5.0清理]
 
     if is_installed; then
         echo ""
@@ -642,6 +719,7 @@ action_upgrade() {
     require_root
     check_arch
     check_debian13
+    migrate_legacy_tproxy         # [迁移-1.5.0清理]
     is_installed || die "未检测到已有安装，请先全新安装"
 
     log_info "开始升级"
@@ -659,12 +737,14 @@ action_upgrade() {
 
     # 部署新脚本（保留配置）
     cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/tproxy-server" /usr/local/bin/tproxy-server
-    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/tproxy-server
+    cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
+    chmod +x "${SCRIPTS_DIR}"/*.sh /usr/local/bin/rproxy-server
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
+    # [迁移-1.5.0清理] 从 tproxy-server 迁移来的机器上新名称的 timer 尚未 enable（已 enable 的无副作用）
+    systemctl enable --now rproxy-server-update.timer 2>/dev/null || true
 
     # 重新部署 LibreSpeed（PHP 版本可能变了）
     deploy_librespeed
@@ -682,6 +762,7 @@ action_upgrade() {
 
 action_uninstall() {
     require_root
+    migrate_legacy_tproxy         # [迁移-1.5.0清理]
     if ! is_installed; then
         log_warn "未检测到 RProxy 服务端，无需卸载"
         exit 0
@@ -697,7 +778,7 @@ action_uninstall() {
 
 do_uninstall_silent() {
     log_step "停止并禁用服务"
-    for svc in tproxy-server-update.timer tproxy-server-update.service xray; do
+    for svc in rproxy-server-update.timer rproxy-server-update.service xray; do
         systemctl disable --now "$svc" 2>/dev/null || true
     done
 
@@ -716,9 +797,11 @@ do_uninstall_silent() {
 
     log_step "删除文件"
     rm -rf "${INSTALL_DIR}" "${SSL_DIR}" "${WEB_ROOT}" \
-           /usr/local/bin/tproxy-server \
-           /etc/systemd/system/tproxy-server-*.service \
-           /etc/systemd/system/tproxy-server-*.timer
+           /usr/local/bin/rproxy-server \
+           /etc/systemd/system/rproxy-server-*.service \
+           /etc/systemd/system/rproxy-server-*.timer
+    # [迁移-1.5.0清理] 兼容软链接
+    rm -f "${LEGACY_INSTALL_DIR}" "${LEGACY_WEB_ROOT}" "${LEGACY_SSL_DIR}" /usr/local/bin/tproxy-server 2>/dev/null || true
 
     systemctl daemon-reload
 
@@ -727,10 +810,10 @@ do_uninstall_silent() {
 }
 
 action_status() {
-    if command -v tproxy-server &>/dev/null; then
-        tproxy-server status
+    if command -v rproxy-server &>/dev/null; then
+        rproxy-server status
     else
-        log_warn "tproxy-server 命令不可用，可能未完成安装"
+        log_warn "rproxy-server 命令不可用，可能未完成安装"
     fi
 }
 
@@ -744,16 +827,16 @@ show_completion_info() {
     echo -e "${GREEN}║              RProxy 服务端 安装完成！                         ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    /usr/local/bin/tproxy-server show
+    /usr/local/bin/rproxy-server show
     echo ""
     echo -e "  ${CYAN}测试网站访问：${NC}https://${DOMAIN}"
     echo -e "  ${CYAN}访客看到的是 LibreSpeed 测速网站${NC}"
     echo ""
     echo -e "  ${CYAN}常用命令：${NC}"
-    echo "    tproxy-server                显示菜单"
-    echo "    tproxy-server status         查看状态"
-    echo "    tproxy-server show           显示客户端配置"
-    echo "    tproxy-server help           完整帮助"
+    echo "    rproxy-server                显示菜单"
+    echo "    rproxy-server status         查看状态"
+    echo "    rproxy-server show           显示客户端配置"
+    echo "    rproxy-server help           完整帮助"
     echo ""
     if [[ "${NEED_REBOOT:-0}" == "1" ]]; then
         echo -e "  ${YELLOW}系统内核已升级，建议执行 reboot 重启后生效。${NC}"

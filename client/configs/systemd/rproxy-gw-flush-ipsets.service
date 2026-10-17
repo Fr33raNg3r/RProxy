@@ -10,8 +10,8 @@ Type=oneshot
 # 3) 重启 mosdns 让它清空 DNS 缓存（这样下次域名访问时会重新 DNS 解析并填入集合）
 ExecStart=/usr/sbin/nft flush set inet tp whitelist_ips
 ExecStart=/usr/sbin/nft flush set inet tp blacklist_ips
-ExecStart=/opt/tproxy-gw/scripts/load-static-ips.sh
-ExecStart=/bin/systemctl restart tproxy-gw-mosdns
+ExecStart=/opt/rproxy-gw/scripts/load-static-ips.sh
+ExecStart=/bin/systemctl restart rproxy-gw-mosdns
 
 # 即使某条命令失败也继续（防止集合不存在时阻塞 timer）
 SuccessExitStatus=0 1

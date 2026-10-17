@@ -10,7 +10,7 @@ import (
 
 // DDNSConfigPath 是 DDNS 配置文件路径（含密钥，权限 0600）
 // 声明为变量而不是常量，方便测试时改写到临时目录
-var DDNSConfigPath = "/opt/tproxy-gw/config/ddns.json"
+var DDNSConfigPath = "/opt/rproxy-gw/config/ddns.json"
 
 var muDDNS sync.Mutex
 

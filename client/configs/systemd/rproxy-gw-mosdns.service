@@ -1,11 +1,11 @@
 [Unit]
-Description=TProxy mosdns DNS forwarder
-After=network.target nftables.service tproxy-gw-iproute.service
+Description=RProxy mosdns DNS forwarder
+After=network.target nftables.service rproxy-gw-iproute.service
 Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/tproxy-gw/bin/mosdns start -d /opt/tproxy-gw/config/mosdns -c config.yaml
+ExecStart=/opt/rproxy-gw/bin/mosdns start -d /opt/rproxy-gw/config/mosdns -c config.yaml
 Restart=on-failure
 RestartSec=5s
 StartLimitBurst=5

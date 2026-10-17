@@ -46,12 +46,12 @@ func RenderMosdnsConfig(u config.DNSUpstreams) error {
 
 // RestartMosdns 重启 mosdns 并校验 2 秒后仍在运行。
 func RestartMosdns() error {
-	if err := exec.Command("systemctl", "restart", "tproxy-gw-mosdns").Run(); err != nil {
+	if err := exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run(); err != nil {
 		return fmt.Errorf("systemctl restart 失败: %w", err)
 	}
 	time.Sleep(2 * time.Second)
-	if !IsServiceActive("tproxy-gw-mosdns") {
-		out, _ := exec.Command("journalctl", "-u", "tproxy-gw-mosdns", "-n", "20", "--no-pager").CombinedOutput()
+	if !IsServiceActive("rproxy-gw-mosdns") {
+		out, _ := exec.Command("journalctl", "-u", "rproxy-gw-mosdns", "-n", "20", "--no-pager").CombinedOutput()
 		return fmt.Errorf("mosdns 启动后崩溃，最近日志:\n%s", string(out))
 	}
 	return nil

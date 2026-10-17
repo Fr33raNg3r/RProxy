@@ -3,7 +3,7 @@
 # RProxy 客户端 静态 IP 加载脚本
 # 把用户在 WebUI 黑白名单里填的 IP/CIDR（域名走 mosdns，IP 走这里）灌进
 # nftables 的 whitelist_ips（强制直连）/ blacklist_ips（强制走代理）set。
-# 触发：tproxy-gw-load-static-ips.service（开机）、tproxy-gw-flush-ipsets.service
+# 触发：rproxy-gw-load-static-ips.service（开机）、rproxy-gw-flush-ipsets.service
 #       （每日 flush 后）、WebUI 保存黑白名单后（dns.go 调用）。
 # 设计：始终 exit 0，不阻塞调用它的 oneshot 服务（文件缺/空、set 未加载、
 #       nft 报错都只告警不失败）。
@@ -11,7 +11,7 @@
 
 set -uo pipefail
 
-DNS_DIR="/opt/tproxy-gw/config/dns"
+DNS_DIR="/opt/rproxy-gw/config/dns"
 
 load_set() {
     local set_name="$1" file="$2"

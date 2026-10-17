@@ -1,11 +1,11 @@
 [Unit]
-Description=TProxy WebUI Management Panel
+Description=RProxy WebUI Management Panel
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/opt/tproxy-gw/bin/webui serve
-WorkingDirectory=/opt/tproxy-gw
+ExecStart=/opt/rproxy-gw/bin/webui serve
+WorkingDirectory=/opt/rproxy-gw
 Restart=on-failure
 RestartSec=5s
 StartLimitBurst=5

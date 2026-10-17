@@ -12,7 +12,7 @@ import (
 )
 
 // UpdateTimerFile update timer 的 systemd 单元路径
-const UpdateTimerFile = "/etc/systemd/system/tproxy-gw-update.timer"
+const UpdateTimerFile = "/etc/systemd/system/rproxy-gw-update.timer"
 
 // WriteUpdateTimer 按指定时分重写 update timer 的 OnCalendar 并使其生效。
 // OnCalendar 固定带 Asia/Shanghai 时区后缀：不管系统时区是否为 UTC，
@@ -26,7 +26,7 @@ Description=RProxy Daily Update Timer (%02d:%02d daily, Asia/Shanghai)
 OnCalendar=*-*-* %02d:%02d:00 Asia/Shanghai
 RandomizedDelaySec=30m
 Persistent=true
-Unit=tproxy-gw-update.service
+Unit=rproxy-gw-update.service
 
 [Install]
 WantedBy=timers.target
@@ -37,7 +37,7 @@ WantedBy=timers.target
 	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
 		return err
 	}
-	return exec.Command("systemctl", "restart", "tproxy-gw-update.timer").Run()
+	return exec.Command("systemctl", "restart", "rproxy-gw-update.timer").Run()
 }
 
 // IsServiceActive 检查 systemd 服务是否运行

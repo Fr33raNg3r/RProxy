@@ -1,10 +1,10 @@
 # ============================================================================
-# TProxy Server Nginx 配置模板
-# 安装时由 install.sh 渲染，输出到 /etc/nginx/conf.d/tproxy-server.conf
+# RProxy Server Nginx 配置模板
+# 安装时由 install.sh 渲染，输出到 /etc/nginx/conf.d/rproxy-server.conf
 # 占位符：
 #   {{DOMAIN}}     - 用户输入的域名
 #   {{WS_PATH}}    - 随机生成的 WebSocket 路径（如 /a1b2c3d4）
-#   {{WEB_ROOT}}   - 静态网站根目录（如 /var/www/tproxy-server）
+#   {{WEB_ROOT}}   - 静态网站根目录（如 /var/www/rproxy-server）
 #   {{SSL_DIR}}    - 证书目录
 #   {{XRAY_PORT}}  - Xray 监听的本地端口（默认 9890）
 #   {{PHP_SOCK}}   - PHP-FPM socket 路径

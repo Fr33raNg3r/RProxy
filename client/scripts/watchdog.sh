@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # RProxy 客户端 健康检查 / 故障转移守护脚本
-# 由 systemd timer 每 60 秒触发：tproxy-gw-watchdog.timer
+# 由 systemd timer 每 60 秒触发：rproxy-gw-watchdog.timer
 # 任务：
 #   1. 通过 Xray SOCKS 出站测试 google.com/generate_204（大陆无法直连）
 #   2. 连续 3 次失败 → 重启 Xray
@@ -12,13 +12,13 @@
 
 set -e
 
-source /opt/tproxy-gw/scripts/common.sh
+source /opt/rproxy-gw/scripts/common.sh
 
 HEALTH_FILE="${DATA_DIR}/health.json"
 STATE_FILE="${DATA_DIR}/watchdog.state"
 mkdir -p "${DATA_DIR}"
 
-LOCK_FILE="/var/run/tproxy-gw-watchdog.lock"
+LOCK_FILE="/var/run/rproxy-gw-watchdog.lock"
 exec 201>"$LOCK_FILE"
 flock -n 201 || exit 0
 
@@ -52,8 +52,8 @@ last_check_time=$(date '+%Y-%m-%d %H:%M:%S')
 last_action=""
 
 is_service_active xray            && xray_active=1
-is_service_active tproxy-gw-mosdns && mosdns_active=1
-is_service_active tproxy-gw-webui  && webui_active=1
+is_service_active rproxy-gw-mosdns && mosdns_active=1
+is_service_active rproxy-gw-webui  && webui_active=1
 
 # 取得当前节点 ID
 if [[ -f "${CONFIG_DIR}/webui.json" ]]; then
@@ -104,12 +104,12 @@ fi
 # ---------- 重启失活的辅助组件 ----------
 if [[ $mosdns_active -eq 0 ]]; then
     log_to_file "mosdns 未运行，尝试重启"
-    systemctl restart tproxy-gw-mosdns || true
+    systemctl restart rproxy-gw-mosdns || true
 fi
 
 if [[ $webui_active -eq 0 ]]; then
     log_to_file "webui 未运行，尝试重启"
-    systemctl restart tproxy-gw-webui || true
+    systemctl restart rproxy-gw-webui || true
 fi
 
 save_state

@@ -1,0 +1,8 @@
+[Unit]
+Description=RProxy Server Daily Update Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rproxy-server/scripts/update-daemon.sh

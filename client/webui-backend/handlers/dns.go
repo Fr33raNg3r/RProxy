@@ -13,7 +13,7 @@ import (
 )
 
 // loadStaticIPsScript 把黑白名单里的静态 IP 灌进 nftables set
-const loadStaticIPsScript = "/opt/tproxy-gw/scripts/load-static-ips.sh"
+const loadStaticIPsScript = "/opt/rproxy-gw/scripts/load-static-ips.sh"
 
 // GetDNSRules GET /api/dns/rules
 func GetDNSRules(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func UpdateDNSRules(w http.ResponseWriter, r *http.Request) {
 
 	// 通知 mosdns reload（v5 支持 SIGHUP 重载，或直接重启）
 	// 重启 mosdns 同时也会清掉它内部的 DNS 缓存
-	_ = exec.Command("systemctl", "restart", "tproxy-gw-mosdns").Run()
+	_ = exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run()
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 

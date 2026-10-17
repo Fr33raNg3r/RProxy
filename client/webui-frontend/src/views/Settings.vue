@@ -80,7 +80,7 @@
         <div style="color: #f87171; font-weight: 600; margin-bottom: 12px;">紧急停止 / 恢复透明代理</div>
         <div class="text-muted" style="margin-bottom: 14px;">
           分流故障时点「紧急停止」清空规则恢复直连；恢复后点「恢复透明代理」重新启用。<br>
-          对应脚本：<code>/opt/tproxy-gw/scripts/emergency-stop.sh</code> / <code>emergency-resume.sh</code>
+          对应脚本：<code>/opt/rproxy-gw/scripts/emergency-stop.sh</code> / <code>emergency-resume.sh</code>
         </div>
         <div class="row-actions">
           <n-button type="error" :loading="stopping" :disabled="resuming" @click="emergencyStop"><template #icon><SvgIcon name="stop" /></template>紧急停止</n-button>

@@ -203,7 +203,7 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 mosdns 配置失败: "+err.Error()))
 			return
 		}
-		_ = exec.Command("systemctl", "restart", "tproxy-gw-mosdns").Run()
+		_ = exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run()
 	}
 	_ = services.RestartXray()
 

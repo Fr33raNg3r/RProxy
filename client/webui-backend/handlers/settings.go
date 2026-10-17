@@ -180,7 +180,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// 异步重启 WebUI（让本次响应先发完）
 		go func() {
 			// 等 1 秒让响应返回
-			_ = exec.Command("bash", "-c", "sleep 1 && systemctl restart tproxy-gw-webui").Start()
+			_ = exec.Command("bash", "-c", "sleep 1 && systemctl restart rproxy-gw-webui").Start()
 		}()
 	}
 	if needRestartNet {
@@ -193,12 +193,12 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 // EmergencyStop POST /api/emergency-stop
 func EmergencyStop(w http.ResponseWriter, r *http.Request) {
-	runEmergencyScript(w, "/opt/tproxy-gw/scripts/emergency-stop.sh")
+	runEmergencyScript(w, "/opt/rproxy-gw/scripts/emergency-stop.sh")
 }
 
 // EmergencyResume POST /api/emergency-resume
 func EmergencyResume(w http.ResponseWriter, r *http.Request) {
-	runEmergencyScript(w, "/opt/tproxy-gw/scripts/emergency-resume.sh")
+	runEmergencyScript(w, "/opt/rproxy-gw/scripts/emergency-resume.sh")
 }
 
 func runEmergencyScript(w http.ResponseWriter, path string) {
@@ -226,7 +226,7 @@ func RestartComponent(w http.ResponseWriter, r *http.Request) {
 	}
 	allowed := map[string]string{
 		"xray":   "xray",
-		"mosdns": "tproxy-gw-mosdns",
+		"mosdns": "rproxy-gw-mosdns",
 		"wg":     "wg-quick@wg0",
 	}
 	svc, ok := allowed[name]

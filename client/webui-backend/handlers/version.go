@@ -20,7 +20,7 @@ var (
 )
 
 const (
-	versionFile = "/opt/tproxy-gw/VERSION"
+	versionFile = "/opt/rproxy-gw/VERSION"
 	// 用 Releases API 而不是 raw VERSION 文件 —— 避免用户拿到尚未打 tag 的 main 分支中间版本。
 	// per_page=30 足够找到最近一个 vX.Y.Z 前缀的 release（按发布时间倒序返回）。
 	releasesURL = "https://api.github.com/repos/Fr33raNg3r/RProxy/releases?per_page=30"
@@ -166,7 +166,7 @@ func RefreshLatest(w http.ResponseWriter, r *http.Request) {
 }
 
 // upgradeLogPath 升级日志（与 TriggerUpgrade 中写入路径保持一致）
-const upgradeLogPath = "/opt/tproxy-gw/logs/upgrade.log"
+const upgradeLogPath = "/opt/rproxy-gw/logs/upgrade.log"
 
 // upgradeDoneMarker install.sh 在 action_upgrade 末尾打印的成功标志。
 const upgradeDoneMarker = "升级完成（"
@@ -286,7 +286,7 @@ func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	_ = os.Truncate(upgradeLogPath, 0)
 
 	// 异步执行 install.sh upgrade，输出到日志。
-	// 必须用 systemd-run 起一个独立的临时 unit：升级末段会 restart tproxy-gw-webui，
+	// 必须用 systemd-run 起一个独立的临时 unit：升级末段会 restart rproxy-gw-webui，
 	// 而本服务未设 KillMode（默认 control-group），重启时 systemd 会连同 cgroup 内的
 	// 所有子进程一起杀掉。setsid/nohup 只改会话/进程组，改不了 cgroup 归属，升级进程
 	// 仍会在重启 webui 时被杀 —— install.sh 走不到结尾的"升级完成"标志，前端永远等不到完成。
@@ -298,10 +298,10 @@ func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		cmd := exec.Command("systemd-run", "--collect",
 			"/bin/bash", "-c",
-			"curl -fsSL "+installScriptRawURL+" -o /opt/tproxy-gw/install.sh.new "+
-				"&& mv /opt/tproxy-gw/install.sh.new /opt/tproxy-gw/install.sh "+
-				"&& chmod +x /opt/tproxy-gw/install.sh "+
-				"&& bash /opt/tproxy-gw/install.sh upgrade >> /opt/tproxy-gw/logs/upgrade.log 2>&1")
+			"curl -fsSL "+installScriptRawURL+" -o /opt/rproxy-gw/install.sh.new "+
+				"&& mv /opt/rproxy-gw/install.sh.new /opt/rproxy-gw/install.sh "+
+				"&& chmod +x /opt/rproxy-gw/install.sh "+
+				"&& bash /opt/rproxy-gw/install.sh upgrade >> /opt/rproxy-gw/logs/upgrade.log 2>&1")
 		_ = cmd.Start()
 	}()
 

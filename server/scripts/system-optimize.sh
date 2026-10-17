@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # RProxy 服务端 - 系统优化脚本
-# 路径: /opt/tproxy-gw/scripts/system-optimize.sh
+# 路径: /opt/rproxy-gw/scripts/system-optimize.sh
 # 由 install.sh 通过 source 调用
 # ============================================================================
 

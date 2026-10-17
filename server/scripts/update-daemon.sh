@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # RProxy 服务端 每日自动更新守护脚本
-# 由 systemd timer 触发：tproxy-server-update.timer (04:05 daily)
+# 由 systemd timer 触发：rproxy-server-update.timer (04:05 daily)
 # 任务：
 #   1. 检查脚本仓库 VERSION 是否有新版 → 拉新代码升级
 #   2. 检查 Xray 版本（通过官方脚本自动判断）
@@ -10,9 +10,9 @@
 
 set -e
 
-source /opt/tproxy-server/scripts/common.sh
+source /opt/rproxy-server/scripts/common.sh
 
-LOCK_FILE="/var/run/tproxy-server-update.lock"
+LOCK_FILE="/var/run/rproxy-server-update.lock"
 exec 200>"$LOCK_FILE" || die "无法创建锁文件"
 flock -n 200 || { log_warn "已有更新任务在运行，跳过"; exit 0; }
 

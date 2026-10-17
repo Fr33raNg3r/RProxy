@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================================
-# tproxy-server: RProxy 服务端命令行管理工具
-# 安装位置：/usr/local/bin/tproxy-server
+# rproxy-server: RProxy 服务端命令行管理工具
+# 安装位置：/usr/local/bin/rproxy-server
 # ============================================================================
 
 set -e
 
-source /opt/tproxy-server/scripts/common.sh
+source /opt/rproxy-server/scripts/common.sh
 
 require_installed() {
     is_installed || die "RProxy 服务端 未安装"
@@ -130,9 +130,9 @@ cmd_status() {
         echo -e "  证书到期：       ${cert_expire}"
     fi
 
-    if is_service_active tproxy-server-update.timer; then
+    if is_service_active rproxy-server-update.timer; then
         local next_run
-        next_run=$(systemctl list-timers tproxy-server-update.timer --no-pager 2>/dev/null | awk 'NR==2 {print $1, $2}')
+        next_run=$(systemctl list-timers rproxy-server-update.timer --no-pager 2>/dev/null | awk 'NR==2 {print $1, $2}')
         echo -e "  下次自动更新：   ${next_run:-未知}"
     fi
     echo ""
@@ -181,7 +181,7 @@ cmd_change_domain() {
     require_installed
     require_root
     local new_domain="$1"
-    [[ -n "$new_domain" ]] || die "用法: tproxy-server change-domain <新域名>"
+    [[ -n "$new_domain" ]] || die "用法: rproxy-server change-domain <新域名>"
 
     local old_domain
     old_domain=$(json_get "${SERVER_CFG}" '.domain')
@@ -294,9 +294,9 @@ cmd_fw() {
         *)
             cat <<EOF
 用法：
-  tproxy-server fw list                 列出当前防火墙规则
-  tproxy-server fw add <port> [tcp|udp] 放行端口（默认 tcp）
-  tproxy-server fw del <port> [tcp|udp] 撤销放行
+  rproxy-server fw list                 列出当前防火墙规则
+  rproxy-server fw add <port> [tcp|udp] 放行端口（默认 tcp）
+  rproxy-server fw del <port> [tcp|udp] 撤销放行
 EOF
             ;;
     esac
@@ -356,10 +356,10 @@ cmd_logs() {
     case "$component" in
         xray)   unit="xray" ;;
         nginx)  unit="nginx" ;;
-        update) unit="tproxy-server-update" ;;
+        update) unit="rproxy-server-update" ;;
         *)
             cat <<EOF
-用法：tproxy-server logs [xray|nginx|update] [行数]
+用法：rproxy-server logs [xray|nginx|update] [行数]
 EOF
             return
             ;;
@@ -373,14 +373,14 @@ EOF
 
 cmd_upgrade() {
     require_root
-    bash /opt/tproxy-server/install.sh upgrade 2>/dev/null \
+    bash /opt/rproxy-server/install.sh upgrade 2>/dev/null \
         || bash <(curl -fsSL "${RAW_URL}/install.sh") upgrade
 }
 
 cmd_uninstall() {
     require_root
-    if [[ -f /opt/tproxy-server/install.sh ]]; then
-        bash /opt/tproxy-server/install.sh uninstall
+    if [[ -f /opt/rproxy-server/install.sh ]]; then
+        bash /opt/rproxy-server/install.sh uninstall
     else
         bash <(curl -fsSL "${RAW_URL}/install.sh") uninstall
     fi
@@ -396,7 +396,7 @@ cmd_help() {
   ${CYAN}RProxy 服务端 管理工具${NC}
 
   用法：
-    tproxy-server [命令]
+    rproxy-server [命令]
 
   命令：
     status                          查看运行状态

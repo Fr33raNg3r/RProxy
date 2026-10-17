@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # RProxy 客户端 每日自动更新守护脚本
-# 由 systemd timer 触发：tproxy-gw-update.timer
+# 由 systemd timer 触发：rproxy-gw-update.timer
 # 任务：
 #   1. 检查 GitHub 仓库 VERSION 是否有新版 → 拉新代码 → 升级
 #   2. 检查 Xray 版本（通过官方脚本自动判断）
@@ -11,9 +11,9 @@
 
 set -e
 
-source /opt/tproxy-gw/scripts/common.sh
+source /opt/rproxy-gw/scripts/common.sh
 
-LOCK_FILE="/var/run/tproxy-gw-update.lock"
+LOCK_FILE="/var/run/rproxy-gw-update.lock"
 exec 200>"$LOCK_FILE" || die "无法创建锁文件"
 flock -n 200 || { log_warn "已有更新任务在运行，本次跳过"; exit 0; }
 
@@ -134,9 +134,9 @@ update_geo_data() {
             | sort -u > "${geo_dir}/geosite-no-cn.txt"
         log_to_file "GeoIP / GeoSite 已更新"
         # 重新加载 cn_ips（geoip-cn.txt 有更新）
-        systemctl restart tproxy-gw-load-cn-ips.service 2>/dev/null || true
+        systemctl restart rproxy-gw-load-cn-ips.service 2>/dev/null || true
         systemctl restart xray
-        systemctl restart tproxy-gw-mosdns
+        systemctl restart rproxy-gw-mosdns
     else
         log_to_file "部分文件下载失败，跳过本次更新"
     fi

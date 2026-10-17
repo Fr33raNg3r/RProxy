@@ -1,0 +1,7 @@
+[Unit]
+Description=RProxy Health Check & Failover
+After=rproxy-gw-webui.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rproxy-gw/scripts/watchdog.sh

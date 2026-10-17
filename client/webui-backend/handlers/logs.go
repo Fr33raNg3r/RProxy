@@ -40,11 +40,11 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 	case "xray-error":
 		out, err = services.TailFile(config.XrayErrorLogPath, lines)
 	case "webui":
-		out, err = services.JournalLog("tproxy-gw-webui", lines)
+		out, err = services.JournalLog("rproxy-gw-webui", lines)
 	case "watchdog":
-		out, err = services.JournalLog("tproxy-gw-watchdog", lines)
+		out, err = services.JournalLog("rproxy-gw-watchdog", lines)
 	case "update":
-		out, err = services.JournalLog("tproxy-gw-update", lines)
+		out, err = services.JournalLog("rproxy-gw-update", lines)
 	case "wg":
 		out, err = services.JournalLog("wg-quick@wg0", lines)
 	default:

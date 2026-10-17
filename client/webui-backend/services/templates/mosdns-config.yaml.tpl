@@ -5,7 +5,7 @@
 
 log:
   level: error
-  file: "/opt/tproxy-gw/logs/mosdns.log"
+  file: "/opt/rproxy-gw/logs/mosdns.log"
 
 api:
   http: "127.0.0.1:9091"
@@ -19,7 +19,7 @@ plugins:
       lazy_cache_ttl: 86400
 
   # ----------- 国内 DNS 上游 -----------
-  # 上游列表来自 /opt/tproxy-gw/config/dns/upstreams.json
+  # 上游列表来自 /opt/rproxy-gw/config/dns/upstreams.json
   - tag: forward_local
     type: forward
     args:
@@ -45,42 +45,42 @@ plugins:
     type: domain_set
     args:
       files:
-        - "/opt/tproxy-gw/data/geo/geosite-cn.txt"
+        - "/opt/rproxy-gw/data/geo/geosite-cn.txt"
 
   # ----------- 域名集合：国外（gfw + geolocation-!cn）-----------
   - tag: geosite_no_cn
     type: domain_set
     args:
       files:
-        - "/opt/tproxy-gw/data/geo/geosite-no-cn.txt"
+        - "/opt/rproxy-gw/data/geo/geosite-no-cn.txt"
 
   # ----------- 用户黑名单（强制走代理）-----------
   - tag: user_blacklist
     type: domain_set
     args:
       files:
-        - "/opt/tproxy-gw/config/dns/blacklist.txt"
+        - "/opt/rproxy-gw/config/dns/blacklist.txt"
 
   # ----------- 用户白名单（强制直连）-----------
   - tag: user_whitelist
     type: domain_set
     args:
       files:
-        - "/opt/tproxy-gw/config/dns/whitelist.txt"
+        - "/opt/rproxy-gw/config/dns/whitelist.txt"
 
   # ----------- 用户静态 hosts -----------
   - tag: user_hosts
     type: hosts
     args:
       files:
-        - "/opt/tproxy-gw/config/dns/hosts.txt"
+        - "/opt/rproxy-gw/config/dns/hosts.txt"
 
   # ----------- IP 集合：国内（用于把解析结果写到 nftables cn_ips）-----------
   - tag: geoip_cn
     type: ip_set
     args:
       files:
-        - "/opt/tproxy-gw/data/geo/geoip-cn.txt"
+        - "/opt/rproxy-gw/data/geo/geoip-cn.txt"
 
   # ============================================================================
   # 子序列：必须定义在 main_sequence 之前（mosdns v5 不支持向前引用）

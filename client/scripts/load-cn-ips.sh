@@ -4,12 +4,12 @@
 # 把 geoip-cn.txt 里的国内 CIDR 一次性灌进 nftables inet tp cn_ips set。
 # 用途：解决"裸 IP 访问国内站点被错送代理"的问题——nftables 不再依赖
 #       mosdns 懒填充，启动时就拥有完整的国内 IP 视图。
-# 触发：tproxy-gw-load-cn-ips.service（开机），update-daemon.sh（每日更新后）
+# 触发：rproxy-gw-load-cn-ips.service（开机），update-daemon.sh（每日更新后）
 # ============================================================================
 
 set -euo pipefail
 
-GEO_FILE="/opt/tproxy-gw/data/geo/geoip-cn.txt"
+GEO_FILE="/opt/rproxy-gw/data/geo/geoip-cn.txt"
 
 if [[ ! -f "$GEO_FILE" ]]; then
     echo "[load-cn-ips] geoip-cn.txt 不存在: $GEO_FILE" >&2

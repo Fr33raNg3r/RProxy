@@ -1,6 +1,6 @@
 #!/usr/sbin/nft -f
 # ============================================================================
-# TProxy 透明代理 nftables 规则
+# RProxy 透明代理 nftables 规则
 # 设计要点：
 #   1. 使用 TPROXY 劫持 TCP/UDP 到 Xray 12345 端口
 #   2. force_proxy_ips：预填 DoH 服务器 IP，强制走代理（防 GeoIP 误判）

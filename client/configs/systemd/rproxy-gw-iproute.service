@@ -1,5 +1,5 @@
 [Unit]
-Description=TProxy IP Rule & Route Setup
+Description=RProxy IP Rule & Route Setup
 After=nftables.service network.target
 Requires=nftables.service
 

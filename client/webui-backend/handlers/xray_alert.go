@@ -8,7 +8,7 @@ import (
 
 // xrayAlertPath Xray 自动更新兼容性告警标志文件，由 update-daemon.sh 在
 // 检测到新版无法加载现有配置并回滚后写入。
-const xrayAlertPath = "/opt/tproxy-gw/data/xray-update-alert.json"
+const xrayAlertPath = "/opt/rproxy-gw/data/xray-update-alert.json"
 
 // GetXrayAlert GET /api/xray/alert
 // 读取告警标志。文件不存在或内容异常时返回 {active:false}。

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # RProxy 服务端 公共函数库
-# 被 install.sh / tproxy-server / update-daemon.sh 共同使用
+# 被 install.sh / rproxy-server / update-daemon.sh 共同使用
 # ============================================================================
 
 # ---------- 全局常量 ----------
@@ -9,9 +9,9 @@ readonly REPO_URL="https://github.com/Fr33raNg3r/RProxy.git"
 readonly REPO_SLUG="Fr33raNg3r/RProxy"
 readonly RAW_URL="https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server"
 readonly RELEASES_API="https://api.github.com/repos/${REPO_SLUG}/releases?per_page=30"
-readonly INSTALL_DIR="/opt/tproxy-server"
+readonly INSTALL_DIR="/opt/rproxy-server"
 readonly XRAY_CONFIG_FILE="/usr/local/etc/xray/config.json"
-readonly BUILD_DIR="/tmp/tproxy-server-build"
+readonly BUILD_DIR="/tmp/rproxy-server-build"
 
 readonly CONFIG_DIR="${INSTALL_DIR}/config"
 readonly LOG_DIR="${INSTALL_DIR}/logs"
@@ -19,9 +19,9 @@ readonly DATA_DIR="${INSTALL_DIR}/data"
 readonly SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 
 readonly SERVER_CFG="${CONFIG_DIR}/server.json"           # 服务端核心配置
-readonly NGINX_CONF="/etc/nginx/conf.d/tproxy-server.conf"
-readonly WEB_ROOT="/var/www/tproxy-server"
-readonly SSL_DIR="/etc/ssl/tproxy-server"
+readonly NGINX_CONF="/etc/nginx/conf.d/rproxy-server.conf"
+readonly WEB_ROOT="/var/www/rproxy-server"
+readonly SSL_DIR="/etc/ssl/rproxy-server"
 readonly ACME_HOME="/root/.acme.sh"
 
 # Xray 监听本地端口

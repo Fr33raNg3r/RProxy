@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CookieName      = "tproxy_session"
+	CookieName      = "rproxy_session"
 	SessionLifetime = 24 * time.Hour
 	// RememberSessionLifetime 登录时勾选"记住我"使用的更长会话有效期
 	RememberSessionLifetime = 30 * 24 * time.Hour
