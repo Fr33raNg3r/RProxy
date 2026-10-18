@@ -44,6 +44,9 @@ cleanup_legacy_tproxy() {
         if [[ -L "$p" ]]; then rm -f "$p"; fi
     done
     rm -f /var/backups/tproxy-server-pre-rproxy-*.tar.gz
+    # 旧定时器（Persistent=true）留下的 stamp 记录，以及旧版升级用过的临时构建目录
+    rm -f /var/lib/systemd/timers/stamp-tproxy-server-*.timer
+    rm -rf /tmp/tproxy-server-build
 }
 
 # ============================================================================
