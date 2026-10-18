@@ -13,8 +13,7 @@ set -e
 # 如果是通过 wget pipe 执行，需要先下载 common.sh
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)"
 
-# [迁移-1.5.0清理] 从旧安装目录直接运行时，同目录的 common.sh 是旧版（常量指向旧路径），必须改用远程最新版
-if [[ -f "${SELF_DIR}/scripts/common.sh" && "${SELF_DIR}" != "/opt/tproxy-gw" ]]; then
+if [[ -f "${SELF_DIR}/scripts/common.sh" ]]; then
     # 本地执行模式
     source "${SELF_DIR}/scripts/common.sh"
     LOCAL_MODE=1
@@ -31,84 +30,19 @@ else
 fi
 
 # ============================================================================
-# [迁移-1.5.0清理] 旧名称 tproxy-gw → rproxy-gw 迁移（1.4.7 引入，1.5.0 整段删除）
-# 由旧版的定时更新 / WebUI 升级按钮拉取本脚本执行，机器无需人工干预
+# 清理 1.4.7 / 1.4.8 改名迁移留下的兼容软链接和迁移前备份包
 # ============================================================================
-LEGACY_INSTALL_DIR="/opt/tproxy-gw"
-LEGACY_WWW_DIR="/var/www/tproxy-gw"
-
-migrate_legacy_tproxy() {
-    # 旧目录是真实目录才需要迁移；已是软链接说明迁移过
-    [[ -d "$LEGACY_INSTALL_DIR" && ! -L "$LEGACY_INSTALL_DIR" ]] || return 0
-    [[ ! -e "$INSTALL_DIR" ]] || die "同时存在 ${LEGACY_INSTALL_DIR} 与 ${INSTALL_DIR}，无法自动迁移，请人工处理"
-
-    log_step "检测到旧版安装（tproxy-gw），迁移为 rproxy-gw"
-
-    # 先拉取新版产物：下载失败就在改动任何东西之前中止，系统保持原样
-    fetch_source
-    # 推送后 CI 约 1 分钟才生成新 release：此时拿到的"最新 release"可能仍是旧布局产物，不能用它迁移
-    [[ -f "${BUILD_DIR}/configs/systemd/rproxy-gw-webui.service" ]] \
-        || die "最新 release 仍是旧版产物（新版可能正在发布），本次不迁移，下次更新时自动重试"
-
-    local bak="/var/backups/tproxy-gw-pre-rproxy-$(date +%Y%m%d-%H%M%S).tar.gz"
-    mkdir -p /var/backups
-    log_info "备份旧安装到 ${bak}"
-    # 日志不进备份；tar 退出码 1 仅表示读取时文件被改动（服务仍在写），备份有效，不应中止迁移
-    (cd / && { tar -czf "$bak" \
-        --exclude='opt/tproxy-gw/data/geo' --exclude='opt/tproxy-gw/backup' --exclude='opt/tproxy-gw/logs' \
-        opt/tproxy-gw \
-        $(ls -d etc/systemd/system/tproxy-gw-* etc/logrotate.d/tproxy-gw etc/sysctl.d/99-tproxy-* 2>/dev/null) \
-        || [[ $? -eq 1 ]]; })
-
-    log_info "停止并停用旧服务"
-    local u
-    # 先停 timer，避免 watchdog 把刚停掉的服务又拉起来
-    for u in tproxy-gw-update.timer tproxy-gw-watchdog.timer tproxy-gw-flush-ipsets.timer \
-             tproxy-gw-watchdog.service tproxy-gw-flush-ipsets.service \
-             tproxy-gw-webui.service tproxy-gw-mosdns.service \
-             tproxy-gw-load-cn-ips.service tproxy-gw-load-static-ips.service \
-             tproxy-gw-iproute.service; do
-        systemctl disable --now "$u" 2>/dev/null || true
-    done
-    # update.service 可能正是调用本脚本的父进程，stop 会连带杀掉升级，只停用不停止
-    systemctl disable tproxy-gw-update.service 2>/dev/null || true
-
-    log_info "搬迁目录并保留兼容软链接"
-    mv "$LEGACY_INSTALL_DIR" "$INSTALL_DIR"
-    ln -s "$INSTALL_DIR" "$LEGACY_INSTALL_DIR"
-    if [[ -d "$LEGACY_WWW_DIR" && ! -L "$LEGACY_WWW_DIR" ]]; then
-        mv "$LEGACY_WWW_DIR" "$WWW_DIR"
-        ln -s "$WWW_DIR" "$LEGACY_WWW_DIR"
+cleanup_legacy_tproxy() {
+    # 1.5.0 起不再提供迁移：仍是未迁移的旧布局时拒绝升级，避免装出半新半旧的系统
+    if [[ -d /opt/tproxy-gw && ! -L /opt/tproxy-gw ]]; then
+        die "检测到未迁移的旧版安装（/opt/tproxy-gw），请先用 1.4.8 的脚本完成迁移后再升级：
+    bash <(curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/v1.4.8/client/install.sh) upgrade 1.4.8"
     fi
-
-    # 配置里残留的旧路径（mosdns / xray 等生成配置）统一改掉；后续升级流程还会重新渲染一遍
-    grep -rIl 'tproxy-gw' "${CONFIG_DIR}" 2>/dev/null \
-        | xargs -r sed -i 's#tproxy-gw#rproxy-gw#g'
-
-    # sysctl 配置改名保留（升级流程不会重写它们）；其余旧文件删除
-    local f
-    for f in /etc/sysctl.d/99-tproxy-*.conf; do
-        if [[ -e "$f" ]]; then mv "$f" "${f/99-tproxy-/99-rproxy-}"; fi
+    local p
+    for p in /opt/tproxy-gw /var/www/tproxy-gw; do
+        if [[ -L "$p" ]]; then rm -f "$p"; fi
     done
-    rm -f /etc/systemd/system/tproxy-gw-*.service /etc/systemd/system/tproxy-gw-*.timer \
-          /etc/logrotate.d/tproxy-gw /var/run/tproxy-gw-*.lock
-
-    # 立即用新单元和新脚本恢复 DNS / 策略路由 / WebUI / 定时器：
-    # 后续升级流程要联网下载（依赖本机 mosdns 解析），且升级中途失败时也不会停在"服务全停"的状态。
-    # WebUI 此时仍是旧二进制（经兼容软链接工作），升级末尾部署新二进制后会重启
-    cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
-    # 本机留存的 install.sh 也换成新版：升级若中途失败，手动重跑它不会再用到旧脚本
-    cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
-    chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
-    cp "${BUILD_DIR}/configs/systemd/"*.service "${BUILD_DIR}/configs/systemd/"*.timer /etc/systemd/system/
-    systemctl daemon-reload
-    systemctl enable rproxy-gw-load-cn-ips.service rproxy-gw-load-static-ips.service \
-        rproxy-gw-flush-ipsets.timer 2>/dev/null || true
-    systemctl enable --now rproxy-gw-iproute.service rproxy-gw-mosdns.service rproxy-gw-webui.service \
-        rproxy-gw-watchdog.timer rproxy-gw-update.timer \
-        || log_warn "部分新服务启动失败，升级流程后续会再次尝试"
-
-    log_done "旧版已迁移为 rproxy-gw（旧安装备份：${bak}）"
+    rm -f /var/backups/tproxy-gw-pre-rproxy-*.tar.gz
 }
 
 # ---------- 主菜单 ----------
@@ -723,7 +657,6 @@ action_install_fresh() {
     require_root
     check_arch
     check_debian13
-    migrate_legacy_tproxy         # [迁移-1.5.0清理]
 
     if is_installed; then
         echo ""
@@ -774,7 +707,7 @@ action_upgrade() {
     require_root
     check_arch
     check_debian13
-    migrate_legacy_tproxy         # [迁移-1.5.0清理]
+    cleanup_legacy_tproxy
 
     if ! is_installed; then
         log_error "未检测到已有安装，请先全新安装"
@@ -878,11 +811,6 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/logrotate/rproxy-gw" /etc/logrotate.d/rproxy-gw
     systemctl daemon-reload
 
-    # [迁移-1.5.0清理] 从 tproxy-gw 迁移来的机器上新名称的单元尚未 enable，这里补上（已 enable 的无副作用）
-    systemctl enable rproxy-gw-mosdns.service rproxy-gw-webui.service \
-        rproxy-gw-watchdog.timer rproxy-gw-update.timer 2>/dev/null || true
-    systemctl enable --now rproxy-gw-iproute.service 2>/dev/null || true
-
     # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）
     systemctl enable --now rproxy-gw-flush-ipsets.timer 2>/dev/null || true
     # 只 enable，不 start —— 启动放到 nft -f 之后，避免 cn_ips 被 flush ruleset 抹掉
@@ -912,8 +840,6 @@ action_upgrade() {
     sleep 2
     restart_service xray
     restart_service rproxy-gw-webui
-    # [迁移-1.5.0清理] 迁移来的机器：启动刚 enable 的 timer（已运行的无副作用）
-    systemctl start rproxy-gw-watchdog.timer rproxy-gw-update.timer 2>/dev/null || true
 
     # 清理旧版升级遗留的 Go/Node 工具链
     remove_legacy_build_toolchain
@@ -924,7 +850,6 @@ action_upgrade() {
 
 action_uninstall() {
     require_root
-    migrate_legacy_tproxy         # [迁移-1.5.0清理]
     if ! is_installed; then
         log_warn "未检测到 RProxy 客户端，无需卸载"
         exit 0
@@ -958,7 +883,6 @@ do_uninstall_silent() {
            /etc/systemd/system/rproxy-gw-*.service \
            /etc/systemd/system/rproxy-gw-*.timer \
            /etc/sysctl.d/99-rproxy-*.conf
-    rm -f "${LEGACY_INSTALL_DIR}" "${LEGACY_WWW_DIR}" 2>/dev/null || true   # [迁移-1.5.0清理] 兼容软链接
 
     systemctl daemon-reload
 
