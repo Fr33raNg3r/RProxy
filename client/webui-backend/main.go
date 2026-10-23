@@ -33,7 +33,6 @@ func usage() {
   webui render-update-timer 按 webui.json 重建每日更新 timer（升级时用，保住自定义时间）
   webui switch-next-node   切换到下一个启用的节点
   webui failback-check     探测排在前面的节点，恢复后自动回切
-  webui migrate-xhttp      把能连通 XHTTP 的旧节点自动迁移到 VLESS+XHTTP
   webui version            打印版本号
 `, Version)
 }
@@ -61,8 +60,6 @@ func main() {
 		runSwitchNextNode()
 	case "failback-check":
 		runFailbackCheck()
-	case "migrate-xhttp":
-		runMigrateXHTTP()
 	case "version":
 		fmt.Println(Version)
 	case "-h", "--help", "help":
@@ -164,17 +161,6 @@ func runFailbackCheck() {
 	}
 	if msg != "" {
 		fmt.Println(msg)
-	}
-}
-
-func runMigrateXHTTP() {
-	msg, err := services.MigrateXHTTP()
-	if msg != "" {
-		fmt.Println(msg)
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "迁移到 XHTTP 失败:", err)
-		os.Exit(1)
 	}
 }
 

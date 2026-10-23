@@ -192,10 +192,6 @@ fi
 
 update_xray
 update_geo_data
-# 服务端可能比客户端晚升级到支持 XHTTP 的版本，每天再试一次自动迁移旧节点
-log_to_file "检查节点能否自动迁移到 VLESS + XHTTP"
-"${BIN_DIR}/webui" migrate-xhttp >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1 \
-    || log_to_file "XHTTP 迁移检查失败（不影响现有连接）"
 prune_logs
 
 log_to_file "================ 更新完成 ================"

@@ -327,11 +327,10 @@ func ReorderNodes(w http.ResponseWriter, r *http.Request) {
 
 // ----------------- 工具 -----------------
 
-// applyNodeDefaults 给新建/编辑的节点填充默认值
+// applyNodeDefaults 给新建/编辑/导入的节点填充默认值
 func applyNodeDefaults(n *config.Node) {
-	if n.Security == "" {
-		n.Security = "auto"
-	}
+	// 1.8.0 起只有 XHTTP：旧备份里的空值 / vmess-ws 节点与 XHTTP 共用 UUID 和路径，直接改按 XHTTP 保存
+	n.Protocol = config.ProtocolVLESSXHTTP
 	if n.WSPath == "" {
 		n.WSPath = "/"
 	}
@@ -341,16 +340,13 @@ func applyNodeDefaults(n *config.Node) {
 }
 
 // validateNode 校验节点必填字段
-// 两种协议都走 TLS，必须用域名连接（不接受 IP，因为需要 TLS SNI）
+// 走 TLS，必须用域名连接（不接受 IP，因为需要 TLS SNI）
 func validateNode(n *config.Node) error {
 	if strings.TrimSpace(n.Name) == "" {
 		return simpleErrMsg("name 不能为空")
 	}
-	// protocol 为空 = 旧节点（按 VMess + WS 处理，等待自动迁移）
-	switch n.Protocol {
-	case "", config.ProtocolVMessWS, config.ProtocolVLESSXHTTP:
-	default:
-		return simpleErrMsg("protocol 必须是 vless-xhttp / vmess-ws 之一")
+	if n.Protocol != config.ProtocolVLESSXHTTP {
+		return simpleErrMsg("protocol 必须是 vless-xhttp")
 	}
 	if strings.TrimSpace(n.Address) == "" {
 		return simpleErrMsg("address 不能为空")
@@ -369,15 +365,6 @@ func validateNode(n *config.Node) error {
 	}
 	if !strings.HasPrefix(n.WSPath, "/") {
 		return simpleErrMsg("ws_path 必须以 / 开头")
-	}
-	// 验证 security 字段（仅 VMess 使用；none / zero 已被 Xray v26.10.21 移除）
-	if n.Protocol != config.ProtocolVLESSXHTTP && n.Security != "" {
-		validSec := map[string]bool{
-			"auto": true, "aes-128-gcm": true, "chacha20-poly1305": true,
-		}
-		if !validSec[n.Security] {
-			return simpleErrMsg("security 必须是 auto / aes-128-gcm / chacha20-poly1305 之一")
-		}
 	}
 	return nil
 }

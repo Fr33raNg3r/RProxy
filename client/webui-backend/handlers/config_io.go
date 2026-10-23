@@ -111,8 +111,9 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 基本校验
+	// 基本校验（先填默认值：1.7.0 及更早导出的节点可能没有 protocol 或仍是 vmess-ws）
 	for i := range bundle.Nodes {
+		applyNodeDefaults(&bundle.Nodes[i])
 		if err := validateNode(&bundle.Nodes[i]); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorMsg("节点校验失败: "+err.Error()))
 			return

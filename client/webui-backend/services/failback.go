@@ -81,11 +81,7 @@ func buildProbeConfig(n config.Node, port int) ([]byte, error) {
 // probeNodeViaXray 临时起一个独立的 Xray 实例走指定节点访问 generate_204，
 // 测完无论成败都会杀掉进程并删除临时配置。主 Xray 全程不受影响。
 func probeNodeViaXray(n config.Node) bool {
-	return probeNodeOnPort(n, failbackSocksPort)
-}
-
-// probeNodeOnPort 同 probeNodeViaXray，但可指定临时 SOCKS 端口（供 XHTTP 迁移探测错开端口）
-func probeNodeOnPort(n config.Node, port int) bool {
+	port := failbackSocksPort
 	b, err := buildProbeConfig(n, port)
 	if err != nil {
 		return false

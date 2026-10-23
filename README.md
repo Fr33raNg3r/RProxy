@@ -1,7 +1,7 @@
 # RProxy
 
 > Debian 13 透明代理网关系统
-> 客户端 + 服务端配套使用，VMess + WebSocket + TLS + 真网站架构
+> 客户端 + 服务端配套使用，VLESS + XHTTP + TLS + 真网站架构
 
 ---
 
@@ -46,7 +46,7 @@ wget -O- https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server/install
 
 ## 部署顺序
 
-1. **先装服务端**——安装完成后会打印一组客户端配置（地址、UUID、WS 路径等）
+1. **先装服务端**——安装完成后会打印一组客户端配置（地址、UUID、路径等）
 2. **再装客户端**——把服务端打印的配置填到客户端 WebUI 的【节点管理】里
 3. **配置局域网**——主路由 DHCP 把网关 + DNS 改成旁路由 IP
 
@@ -88,10 +88,10 @@ wget -O- https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server/install
 
 | 组件 | 当前版本 | 状态 |
 |---|---|---|
-| Client | 1.7.0 | 稳定 |
-| Server | 1.7.0 | 稳定 |
+| Client | 1.8.0 | 稳定 |
+| Server | 1.8.0 | 稳定 |
 
 ## 已知问题
 
-- **MobaXterm 默认模式连 SSH 会卡死在握手阶段**：现有 transport (VMess + WebSocket + TLS) 与 MobaXterm "等服务端 banner 在背靠背发 banner+KEXINIT" 的时序模式存在兼容问题，VPS 端 XRay 会在 1 秒后取消 inbound context。Workaround：MobaXterm session → Advanced SSH settings → 把 "SSH-browser type" / 协议版本固定为 "SSH2"即可解决。OpenSSH (`ssh` 命令)、PuTTY、WinSCP 不受影响。如果能够直连，推荐用白名单解决，跨过XRay。
+- **MobaXterm 默认模式连 SSH 会卡死在握手阶段**：代理通道（该问题在 VMess + WebSocket 时期发现，1.8.0 起已改为 VLESS + XHTTP，尚未重新验证）与 MobaXterm "等服务端 banner 在背靠背发 banner+KEXINIT" 的时序模式存在兼容问题，VPS 端 XRay 会在 1 秒后取消 inbound context。Workaround：MobaXterm session → Advanced SSH settings → 把 "SSH-browser type" / 协议版本固定为 "SSH2"即可解决。OpenSSH (`ssh` 命令)、PuTTY、WinSCP 不受影响。如果能够直连，推荐用白名单解决，跨过XRay。
 

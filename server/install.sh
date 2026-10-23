@@ -2,7 +2,7 @@
 # ============================================================================
 # RProxy 服务端 安装/升级/卸载脚本
 # 适用：Debian 13 x86_64 VPS
-# 协议：VMess + WebSocket + TLS + 真网站
+# 协议：VLESS + XHTTP + TLS + 真网站
 # 用法：
 #   wget -O- https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/server/install.sh | bash
 #   或：bash install.sh [install|upgrade|uninstall|status]
@@ -59,7 +59,7 @@ show_menu() {
         cat <<EOF
 ${CYAN}╔═══════════════════════════════════════════════════════════════╗
 ║          RProxy 服务端 安装/管理脚本                          ║
-║          Debian 13 · VMess + WebSocket + TLS + 真网站         ║
+║          Debian 13 · VLESS + XHTTP + TLS + 真网站             ║
 ╚═══════════════════════════════════════════════════════════════╝${NC}
 
 EOF
@@ -525,7 +525,7 @@ acquire_ssl_cert() {
 }
 
 # ============================================================================
-# 渲染最终 Nginx 配置（含 HTTPS + WS 反代 + 真网站）
+# 渲染最终 Nginx 配置（含 HTTPS + XHTTP 反代 + 真网站）
 # ============================================================================
 
 deploy_final_nginx() {
@@ -545,7 +545,6 @@ deploy_final_nginx() {
         -e "s|{{WS_PATH}}|${ws_path}|g" \
         -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
         -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
-        -e "s|{{XRAY_PORT}}|${XRAY_LOCAL_PORT}|g" \
         "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" \
         > "${NGINX_CONF}"
 
@@ -583,9 +582,7 @@ generate_server_config() {
 {
   "domain":     "${DOMAIN}",
   "uuid":       "${uuid}",
-  "ws_path":    "${ws_path}",
-  "alter_id":   0,
-  "security":   "auto"
+  "ws_path":    "${ws_path}"
 }
 EOF
     chmod 600 "${SERVER_CFG}"

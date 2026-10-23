@@ -102,7 +102,7 @@
             </td>
             <td><strong>{{ n.name }}</strong></td>
             <td class="text-mono text-sm">{{ n.address }}:{{ n.port }}</td>
-            <td class="text-mono text-sm">{{ protoLabel(n.protocol) }} {{ n.ws_path }}</td>
+            <td class="text-mono text-sm">XHTTP {{ n.ws_path }}</td>
             <td>
               <n-tag :type="n.enabled ? 'success' : 'default'" size="small" round>
                 {{ n.enabled ? '启用' : '未启用' }}
@@ -153,14 +153,11 @@
     <!-- 添加/编辑节点 -->
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑节点' : '添加节点'" style="width: 540px;" :mask-closable="false">
       <n-alert type="info" :show-icon="false" style="margin-bottom: 14px;">
-        推荐 <strong>VLESS + XHTTP + TLS</strong>（需服务端 1.6.0 及以上）。地址必须是<strong>域名</strong>（不能是 IP，因为 TLS 需要 SNI 验证）。
+        协议为 <strong>VLESS + XHTTP + TLS</strong>。地址必须是<strong>域名</strong>（不能是 IP，因为 TLS 需要 SNI 验证）。
       </n-alert>
       <n-form label-placement="top" :show-feedback="false">
         <n-form-item label="名称 *">
           <n-input v-model:value="form.name" placeholder="如：HK-VPS" />
-        </n-form-item>
-        <n-form-item label="协议">
-          <n-select v-model:value="form.protocol" :options="protocolOpts" placeholder="VMess + WS（待自动升级为 XHTTP）" />
         </n-form-item>
         <n-grid :cols="3" :x-gap="12">
           <n-gi :span="2">
@@ -177,22 +174,10 @@
         <n-form-item label="UUID *">
           <n-input v-model:value="form.uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
         </n-form-item>
-        <n-grid v-if="form.protocol !== 'vless-xhttp'" :cols="2" :x-gap="12">
-          <n-gi>
-            <n-form-item label="AlterID">
-              <n-input-number v-model:value="form.alter_id" :min="0" style="width: 100%;" />
-            </n-form-item>
-          </n-gi>
-          <n-gi>
-            <n-form-item label="加密方式">
-              <n-select v-model:value="form.security" :options="securityOpts" />
-            </n-form-item>
-          </n-gi>
-        </n-grid>
         <n-form-item label="路径 *">
           <n-input v-model:value="form.ws_path" placeholder="/a1b2c3d4e5f60789" />
         </n-form-item>
-        <div class="text-muted text-xs" style="margin: -6px 0 12px;">必须以 / 开头；XHTTP 与 WS 使用同一个路径（服务端 rproxy-server show 可查看）</div>
+        <div class="text-muted text-xs" style="margin: -6px 0 12px;">必须以 / 开头（服务端 rproxy-server show 可查看）</div>
         <n-form-item label="SNI / Host">
           <n-input v-model:value="form.host" :placeholder="'留空则使用地址：' + (form.address || 'example.com')" />
         </n-form-item>
@@ -356,32 +341,11 @@ const saving = ref(false)
 const testResult = ref(null)
 const showTest = ref(false)
 
-const securityOpts = [
-  { label: 'auto（推荐）', value: 'auto' },
-  { label: 'aes-128-gcm', value: 'aes-128-gcm' },
-  { label: 'chacha20-poly1305', value: 'chacha20-poly1305' }
-]
-
-const protocolOpts = [
-  { label: 'VLESS + XHTTP + TLS（推荐）', value: 'vless-xhttp' },
-  { label: 'VMess + WS + TLS（旧）', value: 'vmess-ws' }
-]
-
-// 协议为空的是 1.6.0 之前的旧节点：按 WS 运行，等待自动迁移到 XHTTP
-function protoLabel(p) {
-  if (p === 'vless-xhttp') return 'XHTTP'
-  if (p === 'vmess-ws') return 'WS'
-  return 'WS（待迁移）'
-}
-
 const blankForm = () => ({
   name: '',
-  protocol: 'vless-xhttp',
   address: '',
   port: 443,
   uuid: '',
-  alter_id: 0,
-  security: 'auto',
   ws_path: '',
   host: '',
 })
@@ -409,13 +373,9 @@ function openEdit(n) {
   editingId.value = n.id
   form.value = {
     name: n.name,
-    // 旧节点没有 protocol：用 null 让下拉框显示占位提示，保存时原样回写空值，不影响自动迁移
-    protocol: n.protocol || null,
     address: n.address,
     port: n.port,
     uuid: n.uuid,
-    alter_id: n.alter_id || 0,
-    security: n.security || 'auto',
     ws_path: n.ws_path || '/',
     host: n.host || '',
   }
@@ -444,7 +404,8 @@ async function saveNode() {
 
   saving.value = true
   error.value = ''
-  const payload = { ...form.value, protocol: form.value.protocol || '' }
+  // 1.8.0 起只有 XHTTP，协议固定
+  const payload = { ...form.value, protocol: 'vless-xhttp' }
   try {
     if (editingId.value) {
       await api.updateNode(editingId.value, payload)

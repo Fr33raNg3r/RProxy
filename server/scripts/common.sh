@@ -24,9 +24,7 @@ readonly WEB_ROOT="/var/www/rproxy-server"
 readonly SSL_DIR="/etc/ssl/rproxy-server"
 readonly ACME_HOME="/root/.acme.sh"
 
-# Xray 监听本地端口
-readonly XRAY_LOCAL_PORT="9890"
-# VLESS + XHTTP 入站端口（nginx grpc_pass 过来；与 WS 共用同一路径，nginx 按 =/path 与 /path/ 区分）
+# VLESS + XHTTP 入站端口（nginx 按 /path/ 前缀 grpc_pass 过来）
 # nginx 模板里写死了 9891，修改时两处要同步
 readonly XRAY_XHTTP_PORT="9891"
 

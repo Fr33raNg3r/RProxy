@@ -18,11 +18,9 @@ require_installed() {
 
 _render_xray() {
     require_installed
-    local uuid ws_path alter_id security
+    local uuid ws_path
     uuid=$(json_get "${SERVER_CFG}" '.uuid')
     ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
-    alter_id=$(json_get "${SERVER_CFG}" '.alter_id')
-    security=$(json_get "${SERVER_CFG}" '.security')
 
     [[ -n "$uuid" && -n "$ws_path" ]] || die "server.json 不完整"
 
@@ -32,36 +30,10 @@ _render_xray() {
     cat > "$tmp" <<EOF
 {
   "log": {
-    "loglevel": "warning"
+    "loglevel": "warning",
+    "access": "none"
   },
   "inbounds": [
-    {
-      "tag": "vmess-ws",
-      "listen": "127.0.0.1",
-      "port": ${XRAY_LOCAL_PORT},
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${uuid}",
-            "alterId": ${alter_id},
-            "email": "default@local"
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "security": "none",
-        "wsSettings": {
-          "path": "${ws_path}"
-        }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "routeOnly": true
-      }
-    },
     {
       "tag": "vless-xhttp",
       "listen": "127.0.0.1",
@@ -83,11 +55,6 @@ _render_xray() {
           "path": "${ws_path}",
           "mode": "auto"
         }
-      },
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls", "quic"],
-        "routeOnly": true
       }
     }
   ],
@@ -173,12 +140,10 @@ cmd_status() {
 
 cmd_show() {
     require_installed
-    local domain ws_path uuid alter_id security
+    local domain ws_path uuid
     domain=$(json_get "${SERVER_CFG}" '.domain')
     ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
     uuid=$(json_get "${SERVER_CFG}" '.uuid')
-    alter_id=$(json_get "${SERVER_CFG}" '.alter_id')
-    security=$(json_get "${SERVER_CFG}" '.security')
 
     echo ""
     echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
@@ -188,16 +153,12 @@ cmd_show() {
     echo "  把以下字段填到 RProxy 客户端 WebUI 的【节点管理】→【+ 添加节点】："
     echo ""
     printf "    %-20s %s\n"             "名称（自定义）："    "如：MyVPS"
-    printf "    %-20s ${CYAN}%s${NC}\n" "协议："           "VLESS + XHTTP + TLS（推荐）"
+    printf "    %-20s ${CYAN}%s${NC}\n" "协议："           "VLESS + XHTTP + TLS"
     printf "    %-20s ${CYAN}%s${NC}\n" "地址 (address)：" "${domain}"
     printf "    %-20s ${CYAN}%s${NC}\n" "端口 (port)："    "443"
     printf "    %-20s ${CYAN}%s${NC}\n" "UUID："           "${uuid}"
     printf "    %-20s ${CYAN}%s${NC}\n" "路径："           "${ws_path}"
     printf "    %-20s ${CYAN}%s${NC}\n" "SNI / Host："     "${domain}"
-    echo ""
-    echo "  仍兼容旧客户端的 VMess + WS + TLS（同一 UUID 与路径）："
-    printf "    %-20s ${CYAN}%s${NC}\n" "AlterID："        "${alter_id}"
-    printf "    %-20s ${CYAN}%s${NC}\n" "加密方式："       "${security}"
     echo ""
     echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
@@ -268,13 +229,6 @@ deploy_final_nginx_inplace() {
         log_warn "找不到 nginx 模板，仅替换 server_name"
         return
     fi
-    # 1.5.x 的 rproxy-server upgrade 用旧 install.sh 升级时不会更新这份模板；
-    # 用旧模板渲染会丢掉 XHTTP 反代，导致已迁移的客户端全部断开
-    if ! grep -q 'grpc_pass' "$tpl"; then
-        log_error "nginx 模板是旧版（不含 XHTTP），请先再执行一次 rproxy-server upgrade 后重试"
-        return 1
-    fi
-
     local php_sock
     php_sock=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -1)
 
@@ -286,7 +240,6 @@ deploy_final_nginx_inplace() {
         -e "s|{{WS_PATH}}|${ws_path}|g" \
         -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
         -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
-        -e "s|{{XRAY_PORT}}|${XRAY_LOCAL_PORT}|g" \
         -e "s|{{PHP_SOCK}}|${php_sock}|g" \
         "$tpl" > "${NGINX_CONF}"
 
@@ -473,7 +426,7 @@ show_menu() {
         echo ""
         echo -e "  ${CYAN}╔═══════════════════════════════════════════════════════════════╗${NC}"
         echo -e "  ${CYAN}║          RProxy 服务端 管理面板                               ║${NC}"
-        echo -e "  ${CYAN}║          VMess + WebSocket + TLS + 真网站                     ║${NC}"
+        echo -e "  ${CYAN}║          VLESS + XHTTP + TLS + 真网站                         ║${NC}"
         echo -e "  ${CYAN}╚═══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
 

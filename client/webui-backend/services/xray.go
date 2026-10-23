@@ -81,9 +81,9 @@ func buildXrayBaseConfig() map[string]interface{} {
 			map[string]interface{}{
 				"tag":      "tproxy-in",
 				"port":     12345,
-				"protocol": "dokodemo-door",
+				"protocol": "tunnel", // 原名 dokodemo-door
 				"settings": map[string]interface{}{
-					"network":        "tcp,udp",
+					"allowedNetwork": "tcp,udp",
 					"followRedirect": true,
 				},
 				"streamSettings": map[string]interface{}{
@@ -92,11 +92,7 @@ func buildXrayBaseConfig() map[string]interface{} {
 						"mark":   255,
 					},
 				},
-				"sniffing": map[string]interface{}{
-					"enabled":      true,
-					"destOverride": []string{"http", "tls", "quic"},
-					"routeOnly":    true,
-				},
+				// 不开 sniffing：路由不按域名匹配，嗅探结果用不上
 			},
 			// SOCKS 内部端口（watchdog 健康检查走这里）
 			map[string]interface{}{
@@ -108,22 +104,15 @@ func buildXrayBaseConfig() map[string]interface{} {
 					"auth": "noauth",
 					"udp":  true,
 				},
-				"sniffing": map[string]interface{}{
-					"enabled":      true,
-					"destOverride": []string{"http", "tls", "quic"},
-					"routeOnly":    true,
-				},
 			},
 		},
 		"outbounds": []interface{}{
 			map[string]interface{}{
 				"tag":      "direct",
 				"protocol": "freedom",
-				"settings": map[string]interface{}{
-					"domainStrategy": "UseIP",
-				},
 				"streamSettings": map[string]interface{}{
-					"sockopt": map[string]interface{}{"mark": 255},
+					// freedom.domainStrategy 已弃用，改写在 sockopt
+					"sockopt": map[string]interface{}{"mark": 255, "domainStrategy": "UseIP"},
 				},
 			},
 			map[string]interface{}{
@@ -144,17 +133,9 @@ func buildXrayBaseConfig() map[string]interface{} {
 	}
 }
 
-// buildProxyOutbound 按节点协议生成 proxy 出站；protocol 为空的旧节点按 VMess + WS 处理
-func buildProxyOutbound(n *config.Node) map[string]interface{} {
-	if n.Protocol == config.ProtocolVLESSXHTTP {
-		return buildXHTTPOutbound(n)
-	}
-	return buildVMessWSOutbound(n)
-}
-
-// buildXHTTPOutbound: VLESS + XHTTP + TLS
+// buildProxyOutbound: VLESS + XHTTP + TLS（1.8.0 起唯一协议，不再看 n.Protocol）
 // 服务端架构：客户端 → TLS(h2)+VLESS+XHTTP → Nginx (TLS 终结, grpc_pass h2c) → Xray (VLESS XHTTP) → 出网
-func buildXHTTPOutbound(n *config.Node) map[string]interface{} {
+func buildProxyOutbound(n *config.Node) map[string]interface{} {
 	host := n.Host
 	if host == "" {
 		host = n.Address
@@ -169,7 +150,7 @@ func buildXHTTPOutbound(n *config.Node) map[string]interface{} {
 		"settings": map[string]interface{}{
 			"vnext": []interface{}{
 				map[string]interface{}{
-					"address": resolveAddress(n.Address), // 同 VMess：预解析，避免依赖 mosdns
+					"address": resolveAddress(n.Address), // 预解析为 IP，避免 Xray 启动时依赖 mosdns（循环依赖）
 					"port":    n.Port,
 					"users": []interface{}{
 						map[string]interface{}{
@@ -192,71 +173,6 @@ func buildXHTTPOutbound(n *config.Node) map[string]interface{} {
 				"serverName": host,
 				// nginx 开了 http2，XHTTP 在 h2 上复用连接
 				"alpn": []string{"h2"},
-			},
-			"sockopt": map[string]interface{}{
-				"mark":        255,
-				"tcpFastOpen": true,
-			},
-		},
-	}
-}
-
-// buildVMessWSOutbound: VMess + WebSocket + TLS
-// 服务端架构：客户端 → TLS+VMess+WS → Nginx (TLS 终结) → Xray (VMess WS) → 出网
-// 所以客户端的 streamSettings.security = "tls"，network = "ws"
-func buildVMessWSOutbound(n *config.Node) map[string]interface{} {
-	host := n.Host
-	if host == "" {
-		host = n.Address // 默认与 address 相同
-	}
-	security := n.Security
-	if security == "" {
-		security = "auto"
-	}
-	wsPath := n.WSPath
-	if wsPath == "" {
-		wsPath = "/"
-	}
-
-	// 把 VPS 域名解析为 IP——避免 Xray 启动时依赖 mosdns
-	// 这是消除"Xray <-> mosdns 循环依赖"的关键
-	// 如果 n.Address 已经是 IP（如 1.2.3.4），net.LookupHost 会原样返回
-	// 如果解析失败（如初次部署 VPS 尚未生效），保留原域名让 Xray 自己尝试
-	address := resolveAddress(n.Address)
-
-	return map[string]interface{}{
-		"tag":      "proxy",
-		"protocol": "vmess",
-		"settings": map[string]interface{}{
-			"vnext": []interface{}{
-				map[string]interface{}{
-					"address": address, // 优先用解析后的 IP，避免循环依赖
-					"port":    n.Port,
-					"users": []interface{}{
-						map[string]interface{}{
-							"id":       n.UUID,
-							"alterId":  n.AlterID,
-							"security": security,
-						},
-					},
-				},
-			},
-		},
-		"streamSettings": map[string]interface{}{
-			"network":  "ws",
-			"security": "tls",
-			"wsSettings": map[string]interface{}{
-				"path": wsPath,
-				"headers": map[string]interface{}{
-					"Host": host, // 保留域名作为 WS Host header
-				},
-			},
-			"tlsSettings": map[string]interface{}{
-				"serverName":    host, // 保留域名作为 TLS SNI
-				"allowInsecure": false,
-				// 只能是 http/1.1：WS 不能跑在 h2 上。Xray v26.10.21 起 ["h2","http/1.1"] 会原样发出，
-				// nginx（http2 on）会选中 h2 导致连不通；旧版 Xray 会强制改成 http/1.1，所以线上行为与以前一致。
-				"alpn": []string{"http/1.1"},
 			},
 			"sockopt": map[string]interface{}{
 				"mark":        255,
@@ -313,6 +229,13 @@ func buildRoutingWithProxy() map[string]interface{} {
 				"type":        "field",
 				"ip":          []string{"geoip:private"},
 				"outboundTag": "direct",
+			},
+			// 屏蔽走代理的 QUIC：套在 XHTTP 的 TCP 隧道里会双重重传，浏览器被拒后自动退回 TCP/h2
+			map[string]interface{}{
+				"type":        "field",
+				"network":     "udp",
+				"port":        "443",
+				"outboundTag": "block",
 			},
 			map[string]interface{}{
 				"type":        "field",

@@ -11,34 +11,28 @@ func validNode(protocol string) config.Node {
 }
 
 func TestValidateNodeProtocol(t *testing.T) {
-	for _, p := range []string{"", config.ProtocolVMessWS, config.ProtocolVLESSXHTTP} {
-		n := validNode(p)
-		if err := validateNode(&n); err != nil {
-			t.Fatalf("protocol=%q 应合法，实际报错 %v", p, err)
-		}
-	}
-	n := validNode("trojan")
-	if err := validateNode(&n); err == nil {
-		t.Fatal("未知 protocol 应被拒绝")
-	}
-}
-
-// Xray v26.10.21 已移除 VMess 的 none / zero，允许保存会导致配置渲染失败
-func TestValidateNodeRejectsRemovedVMessSecurity(t *testing.T) {
-	for _, s := range []string{"none", "zero"} {
-		n := validNode(config.ProtocolVMessWS)
-		n.Security = s
-		if err := validateNode(&n); err == nil {
-			t.Fatalf("security=%q 应被拒绝", s)
-		}
-	}
-}
-
-// VLESS 不使用 VMess 的 security 字段，残留值不应阻止保存
-func TestValidateNodeXHTTPIgnoresVMessSecurity(t *testing.T) {
 	n := validNode(config.ProtocolVLESSXHTTP)
-	n.Security = "none"
 	if err := validateNode(&n); err != nil {
-		t.Fatalf("XHTTP 节点不应校验 security，实际报错 %v", err)
+		t.Fatalf("vless-xhttp 应合法，实际报错 %v", err)
+	}
+	for _, p := range []string{"", "vmess-ws", "trojan"} {
+		n := validNode(p)
+		if err := validateNode(&n); err == nil {
+			t.Fatalf("protocol=%q 应被拒绝", p)
+		}
+	}
+}
+
+// 1.8.0 起只有 XHTTP：旧备份里的空值 / vmess-ws 节点改按 XHTTP 保存（UUID 与路径通用）
+func TestApplyNodeDefaultsForcesXHTTP(t *testing.T) {
+	for _, p := range []string{"", "vmess-ws"} {
+		n := validNode(p)
+		applyNodeDefaults(&n)
+		if n.Protocol != config.ProtocolVLESSXHTTP {
+			t.Fatalf("protocol=%q 应被改为 vless-xhttp，实际 %q", p, n.Protocol)
+		}
+		if err := validateNode(&n); err != nil {
+			t.Fatalf("填充默认值后应能通过校验，实际报错 %v", err)
+		}
 	}
 }

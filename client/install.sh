@@ -910,10 +910,6 @@ action_upgrade() {
         systemctl restart wg-quick@wg0 || log_warn "WireGuard 重启失败，请在 WebUI 中检查"
     fi
 
-    # 旧节点（protocol 为空）探测服务端是否已支持 XHTTP，能连通的自动迁移；不通的保持原样，每日更新时再试
-    log_step "检查节点能否自动迁移到 VLESS + XHTTP"
-    "${BIN_DIR}/webui" migrate-xhttp || log_warn "XHTTP 迁移检查失败，不影响现有连接，每日更新时会再试"
-
     # 升级前代理是通的、升级后不通 → 整体回滚到升级前快照
     # （升级前本来就不通则无法判断是不是升级造成的，不回滚）
     local snap="$UPGRADE_SNAPSHOT"

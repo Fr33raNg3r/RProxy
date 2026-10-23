@@ -122,8 +122,8 @@ func TestBuildProbeConfigIsIsolatedFromMainXray(t *testing.T) {
 		t.Errorf("入站应为 127.0.0.1:10810 的 socks，实际 %v", in)
 	}
 	out := c["outbounds"].([]interface{})[0].(map[string]interface{})
-	if out["protocol"] != "vmess" {
-		t.Errorf("出站应为 vmess，实际 %v", out["protocol"])
+	if out["protocol"] != "vless" {
+		t.Errorf("出站应为 vless，实际 %v", out["protocol"])
 	}
 	mark := out["streamSettings"].(map[string]interface{})["sockopt"].(map[string]interface{})["mark"].(float64)
 	if mark != 255 {
