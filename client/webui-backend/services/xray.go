@@ -14,6 +14,10 @@ import (
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 )
 
+// xrayTmpConfPath 是写入后先交给 xray -test 校验的临时文件。
+// 必须以 .json 结尾：Xray v26.10.21 起按扩展名识别格式，.tmp 会被直接拒绝（-format=json 也无效）。
+var xrayTmpConfPath = config.XrayConfDir + "/config.tmp.json"
+
 // RenderXrayConfig 根据节点池和当前节点 ID 生成 Xray 配置文件
 // 如果 currentNodeID 为空，生成一个最小可用配置（无代理出站）
 func RenderXrayConfig(nodes []config.Node, currentNodeID string) error {
@@ -46,7 +50,7 @@ func RenderXrayConfig(nodes []config.Node, currentNodeID string) error {
 		return err
 	}
 
-	tmp := config.XrayConfPath + ".tmp"
+	tmp := xrayTmpConfPath
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -193,7 +197,9 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 			"tlsSettings": map[string]interface{}{
 				"serverName":    host, // 保留域名作为 TLS SNI
 				"allowInsecure": false,
-				"alpn":          []string{"h2", "http/1.1"},
+				// 只能是 http/1.1：WS 不能跑在 h2 上。Xray v26.10.21 起 ["h2","http/1.1"] 会原样发出，
+				// nginx（http2 on）会选中 h2 导致连不通；旧版 Xray 会强制改成 http/1.1，所以线上行为与以前一致。
+				"alpn": []string{"http/1.1"},
 			},
 			"sockopt": map[string]interface{}{
 				"mark":        255,

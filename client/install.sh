@@ -354,7 +354,9 @@ fetch_source() {
 
 install_xray() {
     log_step "通过官方一键脚本安装 Xray-core"
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    # --without-logfiles：官方脚本会把 /var/log/xray 改成 xray:xray 700，
+    # 而本项目以 root 运行且无 CAP_DAC_OVERRIDE，会因此打不开 log 起不来；日志目录由 ensure_xray_log_dir 自行管理
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles
     ensure_xray_log_dir
 
     # 关键修复：让 Xray 以 root 运行
@@ -375,10 +377,12 @@ install_xray() {
 # 打开失败 = 服务起不来。install 和 upgrade 都要调，避免遗留所有权异常的旧文件。
 ensure_xray_log_dir() {
     mkdir -p /var/log/xray
-    chown nobody:nogroup /var/log/xray 2>/dev/null || chown nobody /var/log/xray
+    # Xray 以 root 运行，但 override 的 CapabilityBoundingSet 不含 CAP_DAC_OVERRIDE，
+    # root 也受普通文件权限约束——目录必须属于 root，才能在其中创建 log 文件。
+    chown root:root /var/log/xray
     chmod 755 /var/log/xray
     # 清理旧 log 文件，让 Xray 以当前 user 重新创建。
-    # 历史上 Xray 在 nobody / root 两种 user 间切换过，旧文件所有权可能与当前不匹配。
+    # 历史上 Xray 在 nobody / xray / root 几种 user 间切换过，旧文件所有权可能与当前不匹配。
     rm -f /var/log/xray/access.log /var/log/xray/error.log
 }
 
@@ -795,7 +799,7 @@ action_upgrade() {
     fi
 
     # 4) Xray：官方脚本自带版本检查（看到新版才下载）
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles || true
     ensure_xray_log_dir
     # 重写 Xray override.conf（关键：修复 NoNewPrivileges 等配置）
     # 即使 Xray 没升级，老版本的 override.conf 可能用了错误的空值语法导致 TPROXY 失效

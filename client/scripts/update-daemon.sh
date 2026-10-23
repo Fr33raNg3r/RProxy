@@ -67,7 +67,8 @@ update_xray() {
         cp -f "$xray_bin" "$xray_bak"
     fi
 
-    if ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
+    # --without-logfiles：不让官方脚本把 /var/log/xray 改成 xray:xray 700（root 无 CAP_DAC_OVERRIDE 会打不开 log）
+    if ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
         >>"$logf" 2>&1; then
         log_to_file "Xray 升级失败（保持原版本运行）"
         [[ -n "$xray_bak" ]] && rm -f "$xray_bak"

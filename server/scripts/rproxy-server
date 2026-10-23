@@ -27,7 +27,8 @@ _render_xray() {
     [[ -n "$uuid" && -n "$ws_path" ]] || die "server.json 不完整"
 
     mkdir -p /usr/local/etc/xray
-    local tmp="${XRAY_CONFIG_FILE}.tmp"
+    # 临时文件必须以 .json 结尾：Xray v26.10.21 起按扩展名识别格式，.tmp 会被拒绝（-format=json 也无效）
+    local tmp="${XRAY_CONFIG_FILE%.json}.tmp.json"
     cat > "$tmp" <<EOF
 {
   "log": {
@@ -74,7 +75,7 @@ _render_xray() {
 }
 EOF
 
-    # 验证：用 -format=json 显式指定格式（避免 .tmp 后缀报错）
+    # 验证：用 -format=json 显式指定格式
     if ! xray run -test -format=json -c "$tmp" >/dev/null 2>&1; then
         log_error "渲染的 Xray 配置语法错误"
         xray run -test -format=json -c "$tmp" 2>&1
