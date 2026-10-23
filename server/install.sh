@@ -97,10 +97,15 @@ EOF
         echo "    3) 卸载"
         echo "    4) 查看状态"
         echo "    5) 系统优化（内核切换、网络调优）"
+        if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+            echo -e "    6) Xray 自动更新开关（当前：${YELLOW}已关闭${NC}）"
+        else
+            echo "    6) Xray 自动更新开关（当前：已开启）"
+        fi
         echo "    0) 退出"
         echo ""
         local choice
-        choice=$(ask "  请输入选项 [0-5]: ")
+        choice=$(ask "  请输入选项 [0-6]: ")
         case "$choice" in
             # 终止性操作
             1) action_install_fresh; exit 0 ;;
@@ -109,6 +114,7 @@ EOF
             # 查看/工具类
             4) action_status; press_enter ;;
             5) action_system_optimize ;;
+            6) action_xray_autoupdate; press_enter ;;
             0) exit 0 ;;
             *) log_error "无效选项"; sleep 1 ;;
         esac
@@ -675,6 +681,8 @@ action_install_fresh() {
 # 这些函数放在 install.sh 而不是 common.sh：rproxy-server upgrade 会 source 本机旧版 common.sh。
 readonly ROLLBACK_BIN="/usr/local/sbin/rproxy-rollback"
 readonly HOLD_RPROXY_FILE="/var/lib/rproxy-server/hold-rproxy-version"
+# 存在即关闭 Xray 自动更新（与 rproxy-server xray-autoupdate 共用）
+readonly NO_XRAY_AUTO_UPDATE_FILE="/var/lib/rproxy-server/no-xray-auto-update"
 UPGRADE_SNAPSHOT=""   # 升级前快照名；非空表示"中途失败要自动回滚"
 
 # 升级后本机自检（含 XHTTP）：服务刚重启需要几秒，最多试 3 次
@@ -817,6 +825,23 @@ do_uninstall_silent() {
 
     log_info "Nginx 与 PHP-FPM 等基础包未自动卸载（可能其他用途在使用）"
     log_info "防火墙规则未清除（保留 SSH 安全）。如需清除：nft flush ruleset"
+}
+
+# 切换 Xray 自动更新（当前开启则关闭，反之亦然）。直接操作标记文件，
+# 不依赖本机 rproxy-server 的版本；update-daemon.sh 读取，手动升级不受影响
+action_xray_autoupdate() {
+    if ! is_installed; then
+        log_warn "RProxy 服务端 未安装"
+        return
+    fi
+    if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+        rm -f "$NO_XRAY_AUTO_UPDATE_FILE"
+        log_info "Xray 自动更新已开启"
+    else
+        mkdir -p "$(dirname "$NO_XRAY_AUTO_UPDATE_FILE")"
+        touch "$NO_XRAY_AUTO_UPDATE_FILE"
+        log_info "Xray 自动更新已关闭（RProxy 自身升级、证书续期不受影响；手动升级仍会升级 Xray）"
+    fi
 }
 
 action_status() {
