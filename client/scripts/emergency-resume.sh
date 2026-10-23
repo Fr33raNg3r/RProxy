@@ -17,8 +17,9 @@ systemctl start xray
 
 echo "[恢复] 重载 nftables 规则..."
 nft -f /etc/nftables.conf
-# nft -f 含 flush ruleset，cn_ips 集合被清空，必须重灌
+# nft -f 含 flush ruleset，cn_ips 与黑白名单集合都被清空，必须重灌
 systemctl restart rproxy-gw-load-cn-ips.service 2>/dev/null || true
+systemctl restart rproxy-gw-load-static-ips.service 2>/dev/null || true
 
 echo "[恢复] 重置 resolv.conf 指向本机 mosdns..."
 chattr -i /etc/resolv.conf 2>/dev/null || true

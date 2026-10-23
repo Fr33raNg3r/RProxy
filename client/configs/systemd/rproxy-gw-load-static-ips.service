@@ -2,6 +2,8 @@
 Description=RProxy Load static whitelist/blacklist IPs into nftables sets
 After=nftables.service rproxy-gw-iproute.service
 Requires=nftables.service
+# 与 nftables 同停同启：nftables 重启会清空黑白名单 set，需要重新加载静态 IP
+PartOf=nftables.service
 
 [Service]
 Type=oneshot
@@ -9,4 +11,4 @@ RemainAfterExit=yes
 ExecStart=/opt/rproxy-gw/scripts/load-static-ips.sh
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target nftables.service

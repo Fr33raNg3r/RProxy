@@ -531,6 +531,13 @@ deploy_final_nginx() {
     local ws_path
     ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
 
+    # 先备份：nginx -t 不通过时要恢复原配置，不能把坏配置留在磁盘上
+    # （运行中的 nginx 当下不受影响，但下次 reload / 证书续期 / 重启服务器就起不来）
+    # .bak 后缀不匹配 conf.d/*.conf，不会被 nginx 加载
+    local bak="${NGINX_CONF}.bak"
+    rm -f "$bak"
+    [[ -f "${NGINX_CONF}" ]] && cp -f "${NGINX_CONF}" "$bak"
+
     # 用 sed 替换占位符
     sed -e "s|{{DOMAIN}}|${DOMAIN}|g" \
         -e "s|{{WS_PATH}}|${ws_path}|g" \
@@ -549,9 +556,13 @@ deploy_final_nginx() {
 
     if ! nginx -t; then
         log_error "Nginx 配置语法错误"
-        nginx -t
+        if [[ -f "$bak" ]]; then
+            mv -f "$bak" "${NGINX_CONF}"
+            log_warn "已恢复为原 Nginx 配置"
+        fi
         exit 1
     fi
+    rm -f "$bak"
     systemctl reload nginx
     log_done "Nginx 已加载新配置"
 }

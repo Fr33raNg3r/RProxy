@@ -278,6 +278,10 @@ deploy_final_nginx_inplace() {
     local php_sock
     php_sock=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -1)
 
+    # 先备份，nginx -t 不通过就恢复（同 install.sh 的 deploy_final_nginx）
+    local bak="${NGINX_CONF}.bak"
+    cp -f "${NGINX_CONF}" "$bak"
+
     sed -e "s|{{DOMAIN}}|${domain}|g" \
         -e "s|{{WS_PATH}}|${ws_path}|g" \
         -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
@@ -286,7 +290,13 @@ deploy_final_nginx_inplace() {
         -e "s|{{PHP_SOCK}}|${php_sock}|g" \
         "$tpl" > "${NGINX_CONF}"
 
-    nginx -t && systemctl reload nginx
+    if ! nginx -t; then
+        mv -f "$bak" "${NGINX_CONF}"
+        log_error "新 Nginx 配置语法错误，已恢复为原配置"
+        return 1
+    fi
+    rm -f "$bak"
+    systemctl reload nginx
 }
 
 # ============================================================================

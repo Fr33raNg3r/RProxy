@@ -2,6 +2,9 @@
 Description=RProxy Load GeoIP-CN into nftables cn_ips set
 After=nftables.service rproxy-gw-iproute.service
 Requires=nftables.service
+# 与 nftables 同停同启：nftables 重启会重建规则、清空 cn_ips，
+# 只有 Requires 时本服务不会被重新拉起，国内流量会全部绕道走代理
+PartOf=nftables.service
 ConditionPathExists=/opt/rproxy-gw/data/geo/geoip-cn.txt
 
 [Service]
@@ -10,4 +13,4 @@ RemainAfterExit=yes
 ExecStart=/opt/rproxy-gw/scripts/load-cn-ips.sh
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target nftables.service

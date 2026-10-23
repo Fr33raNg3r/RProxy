@@ -119,6 +119,14 @@ if ! ip rule | grep -q 'fwmark 0x1 lookup 100' || ! ip route show table 100 | gr
     systemctl restart rproxy-gw-iproute || true
 fi
 
+# cn_ips 被清空（只剩 nftables.conf 预置的几条 DNS）时，国内流量会全部绕道走代理；
+# 正常加载后有数千条。集合不存在（如紧急停止后）则跳过，不去打扰
+if nft list set inet tp cn_ips >/dev/null 2>&1 && \
+   [[ $(nft list set inet tp cn_ips | grep -oE '[0-9]+(\.[0-9]+){3}(/[0-9]+|-[0-9.]+)?' | wc -l) -lt 100 ]]; then
+    log_to_file "cn_ips 集合几乎为空，尝试重新加载国内 IP"
+    systemctl restart rproxy-gw-load-cn-ips || true
+fi
+
 save_state
 
 # ---------- 写入 health.json ----------

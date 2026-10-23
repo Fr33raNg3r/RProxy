@@ -813,6 +813,13 @@ action_upgrade() {
     cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
     chmod +x "${INSTALL_DIR}/install.sh"
     cp "${BUILD_DIR}/configs/nftables-rproxy.nft" /etc/nftables.conf
+    # 模板里 WG 放行规则写死 51820；用户在 WebUI 改过端口的话要写回，
+    # 否则 WG 响应包会被 TPROXY 劫持、客户端握手失败（同 services/nftables.go 的 sentinel 规则）
+    local wg_port
+    wg_port=$(jq -r '.wg_listen_port // empty' "${CONFIG_DIR}/webui.json" 2>/dev/null || true)
+    if [[ "$wg_port" =~ ^[0-9]+$ ]]; then
+        sed -i -E "s/^([[:space:]]*udp sport )[0-9]+( return[[:space:]]*#[[:space:]]*rproxy:wg-listen-port)/\1${wg_port}\2/" /etc/nftables.conf
+    fi
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
     cp "${BUILD_DIR}/configs/logrotate/rproxy-gw" /etc/logrotate.d/rproxy-gw
@@ -820,8 +827,8 @@ action_upgrade() {
 
     # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）
     systemctl enable --now rproxy-gw-flush-ipsets.timer 2>/dev/null || true
-    # iproute 的 [Install] 新增了 WantedBy=nftables.service，需 reenable 才会建立对应链接（不影响运行状态）
-    systemctl reenable rproxy-gw-iproute.service 2>/dev/null || true
+    # 这几个服务的 [Install] 含 WantedBy=nftables.service，需 reenable 才会建立对应链接（不影响运行状态）
+    systemctl reenable rproxy-gw-iproute.service rproxy-gw-load-cn-ips.service rproxy-gw-load-static-ips.service 2>/dev/null || true
     # 只 enable，不 start —— 启动放到 nft -f 之后，避免 cn_ips 被 flush ruleset 抹掉
     systemctl enable rproxy-gw-load-cn-ips.service 2>/dev/null || true
     systemctl enable rproxy-gw-load-static-ips.service 2>/dev/null || true
@@ -842,6 +849,8 @@ action_upgrade() {
     # 用 restart 而不是 enable --now —— 后者对已 active(exited) 的 oneshot 不会再触发 ExecStart
     systemctl restart rproxy-gw-load-cn-ips.service 2>/dev/null || true
     systemctl restart rproxy-gw-load-static-ips.service 2>/dev/null || true
+    # 策略路由：nft -f 不影响 ip rule，但升级前若已停掉（如 nftables 曾被停过）需在这里补上；已运行则无操作
+    systemctl start rproxy-gw-iproute.service 2>/dev/null || true
     # 重启顺序很关键：mosdns 必须先于 Xray 启动
     # 否则 Xray 启动时需要解析 VPS 域名，但 mosdns 还没起来 → Xray 解析失败 → 退出
     # 即使 Xray 配置已经预解析了 IP，mosdns 先起也是更安全的顺序
@@ -849,6 +858,10 @@ action_upgrade() {
     sleep 2
     restart_service xray
     restart_service rproxy-gw-webui
+    # 上面 render-wg 重新生成了 wg0.conf，运行中的 WG 需重启才会用上（客户端会自动重连）；未启用则不动
+    if systemctl is-active --quiet wg-quick@wg0; then
+        systemctl restart wg-quick@wg0 || log_warn "WireGuard 重启失败，请在 WebUI 中检查"
+    fi
 
     # 旧节点（protocol 为空）探测服务端是否已支持 XHTTP，能连通的自动迁移；不通的保持原样，每日更新时再试
     log_step "检查节点能否自动迁移到 VLESS + XHTTP"
