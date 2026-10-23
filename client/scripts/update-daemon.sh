@@ -31,6 +31,13 @@ check_self_update() {
         return 1
     fi
     log_to_file "本地版本：${local_ver}    远端版本：${remote_ver}"
+    # 升级后曾自动回滚的版本：不再自动升级，等发布更新的版本（手动升级不受限制）
+    local held
+    held=$(cat /var/lib/rproxy-gw/hold-rproxy-version 2>/dev/null || true)
+    if [[ -n "$held" && "$remote_ver" == "$held" ]]; then
+        log_to_file "版本 ${held} 升级后曾自动回滚，跳过自动升级"
+        return 1
+    fi
     if [[ "$local_ver" != "$remote_ver" ]]; then
         log_to_file "发现新版本，开始升级"
         # 下载最新 install.sh 并以 upgrade 模式执行
@@ -38,9 +45,12 @@ check_self_update() {
         tmp_install=$(mktemp)
         if curl -fsSL --max-time 60 "${RAW_URL}/install.sh" -o "$tmp_install"; then
             chmod +x "$tmp_install"
-            bash "$tmp_install" upgrade >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1
+            if bash "$tmp_install" upgrade >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1; then
+                log_to_file "自我升级完成"
+            else
+                log_to_file "自我升级失败（升级流程会自动回滚到升级前快照，详见上方日志）"
+            fi
             rm -f "$tmp_install"
-            log_to_file "自我升级完成"
             return 0
         else
             log_to_file "下载新 install.sh 失败"
@@ -52,50 +62,70 @@ check_self_update() {
 }
 
 # ---------- 2. 升级 Xray ----------
-# 升级前备份旧二进制；装新版后用新版校验现有配置能否加载，
-# 不兼容（如 VMess/WS 等弃用功能被移除）则回滚并以旧版重启；
-# 能加载但实际连不通（如 1.5.0 遇到的 ALPN 行为变化）同样回滚。
-# 两种情况都写告警标志 data/xray-update-alert.json 供 WebUI 展示。
+# 有新版本才升级。升级前打本机快照（rproxy-rollback），装新版后：
+#   - 新版无法加载现有配置（如弃用功能被移除）
+#   - 能加载但实际连不通（如 1.5.0 遇到的 ALPN 行为变化，仅在升级前是通的时才判断）
+# 任一情况都整体回滚到快照——连同官方脚本对 systemd 单元、目录等的改动一起撤销，
+# 并记录问题版本，之后跳过它直到上游发布新版本。告警写入 data/xray-update-alert.json 供 WebUI 展示。
 update_xray() {
-    log_to_file "检查 Xray 版本（官方脚本自动判断）"
+    log_to_file "检查 Xray 版本"
     local logf="${LOG_DIR}/$(date +%Y%m%d).log"
     local xray_bin="/usr/local/bin/xray"
     local xray_cfg="/usr/local/etc/xray/config.json"
-    local alert_file="${DATA_DIR}/xray-update-alert.json"
-    local xray_bak=""
-    if [[ -x "$xray_bin" ]]; then
-        xray_bak=$(mktemp)
-        cp -f "$xray_bin" "$xray_bak"
+    local cur latest held
+    cur=$("$xray_bin" version 2>/dev/null | head -n 1 | awk '{print $2}')
+    latest=$(curl -fsSL --max-time 30 https://api.github.com/repos/XTLS/Xray-core/releases/latest \
+                 | jq -r '.tag_name // empty' 2>/dev/null || true)
+    latest="${latest#v}"
+    if [[ -z "$latest" ]]; then
+        log_to_file "无法获取 Xray 最新版本，本次跳过"
+        return
     fi
-    # 升级前的版本与连通性：只有"升级前通、升级后不通"才归咎于 Xray 升级
-    local old_ver pre_ok=0
-    old_ver=$("$xray_bin" version 2>/dev/null | head -n 1)
-    proxy_health_check 10808 && pre_ok=1
-
-    # --without-logfiles：不让官方脚本把 /var/log/xray 改成 xray:xray 700（root 无 CAP_DAC_OVERRIDE 会打不开 log）
-    if ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
-        >>"$logf" 2>&1; then
-        log_to_file "Xray 升级失败（保持原版本运行）"
-        [[ -n "$xray_bak" ]] && rm -f "$xray_bak"
+    if [[ "$latest" == "$cur" ]]; then
+        log_to_file "Xray 已是最新版 ${cur}"
+        return
+    fi
+    held=$(cat /var/lib/rproxy-gw/hold-xray-version 2>/dev/null || true)
+    if [[ "$latest" == "$held" ]]; then
+        log_to_file "Xray ${held} 曾导致问题并已回滚，跳过，等待上游发布新版本"
         return
     fi
 
-    # 官方脚本可能已用新版重启 xray；用新版二进制校验现有配置能否加载。
-    if [[ -f "$xray_cfg" ]] && ! "$xray_bin" run -test -format=json -c "$xray_cfg" >>"$logf" 2>&1; then
-        rollback_xray "$xray_bak" "新版 Xray 无法加载现有配置" \
-            "Xray 自动更新检测到新版本与当前配置不兼容（可能是被弃用的功能已被移除），已自动回滚到旧版本以保持服务可用。"
-    else
-        log_to_file "Xray 新版本配置校验通过"
-        local new_ver
-        new_ver=$("$xray_bin" version 2>/dev/null | head -n 1)
-        if [[ $pre_ok -eq 1 && "$new_ver" != "$old_ver" ]] && ! xray_health_after_upgrade; then
-            rollback_xray "$xray_bak" "新版 Xray 能加载配置但代理连不通" \
-                "Xray 自动更新后代理连不通（新版本能加载配置，但实际连接失败），已自动回滚到旧版本以保持服务可用。"
-        else
-            rm -f "$alert_file" 2>/dev/null || true
-        fi
+    # 升级前的连通性：只有"升级前通、升级后不通"才归咎于 Xray 升级
+    local pre_ok=0 snap
+    proxy_health_check 10808 && pre_ok=1
+    if ! snap=$(/usr/local/sbin/rproxy-rollback create "Xray 升级前 ${cur} → ${latest}" 2>>"$logf"); then
+        log_to_file "快照创建失败（磁盘空间不足？），为安全起见跳过本次 Xray 升级"
+        return
     fi
-    [[ -n "$xray_bak" ]] && rm -f "$xray_bak"
+    log_to_file "Xray ${cur} → ${latest}，已创建快照 ${snap}"
+
+    # --without-logfiles：不让官方脚本把 /var/log/xray 改成 xray:xray 700（root 无 CAP_DAC_OVERRIDE 会打不开 log）
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
+        >>"$logf" 2>&1 || log_to_file "Xray 安装脚本返回失败"
+
+    local new
+    new=$("$xray_bin" version 2>/dev/null | head -n 1 | awk '{print $2}')
+    if [[ -z "$new" ]]; then
+        xray_rollback "$snap" "Xray 升级后程序无法运行"
+    elif [[ "$new" == "$cur" ]]; then
+        log_to_file "Xray 版本未变化（${cur}），可能是下载失败，保持原状"
+    elif [[ -f "$xray_cfg" ]] && ! "$xray_bin" run -test -format=json -c "$xray_cfg" >>"$logf" 2>&1; then
+        xray_rollback "$snap" "新版 Xray ${new} 无法加载现有配置（可能是被弃用的功能已被移除）"
+    elif [[ $pre_ok -eq 1 ]] && ! xray_health_after_upgrade; then
+        xray_rollback "$snap" "新版 Xray ${new} 能加载配置但代理连不通"
+    else
+        log_to_file "Xray 已升级：${cur} → ${new}"
+        rm -f /var/lib/rproxy-gw/hold-xray-version
+    fi
+}
+
+# xray_rollback <快照名> <原因>：整体回滚到升级前快照，并写入告警与问题版本
+xray_rollback() {
+    local logf="${LOG_DIR}/$(date +%Y%m%d).log"
+    log_to_file "$2，回滚到快照 $1"
+    /usr/local/sbin/rproxy-rollback --yes --reason "$2" "$1" >>"$logf" 2>&1 \
+        || log_to_file "回滚失败，请 SSH 登录后执行 rproxy-rollback"
 }
 
 # xray_health_after_upgrade 等新版 Xray 起来后检测代理，最多 3 次（官方脚本重启 Xray 需要几秒）
@@ -106,26 +136,6 @@ xray_health_after_upgrade() {
         proxy_health_check 10808 && return 0
     done
     return 1
-}
-
-# rollback_xray <旧二进制备份> <日志原因> <WebUI 告警文案>
-rollback_xray() {
-    local bak="$1" reason="$2" message="$3"
-    local logf="${LOG_DIR}/$(date +%Y%m%d).log"
-    log_to_file "${reason}，回滚到旧版本"
-    if [[ -n "$bak" ]]; then
-        cp -f "$bak" /usr/local/bin/xray
-        systemctl restart xray >>"$logf" 2>&1 || true
-        log_to_file "已回滚并以旧版本重启 Xray"
-    fi
-    mkdir -p "${DATA_DIR}"
-    cat > "${DATA_DIR}/xray-update-alert.json" <<EOF
-{
-  "active": true,
-  "time": "$(date '+%Y-%m-%d %H:%M:%S')",
-  "message": "${message}"
-}
-EOF
 }
 
 # ---------- 3. 更新 GeoIP / GeoSite ----------

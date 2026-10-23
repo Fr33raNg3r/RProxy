@@ -36,7 +36,7 @@
         v-if="xrayAlert.active"
         type="error"
         closable
-        title="Xray 自动更新已回滚"
+        title="自动更新已回滚"
         style="margin-bottom: 14px;"
         @close="onDismissXrayAlert"
       >

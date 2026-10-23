@@ -1,0 +1,257 @@
+#!/bin/bash
+# ============================================================================
+# rproxy-rollback：RProxy 服务端本机快照、离线回滚与本机自检
+# 安装位置：/usr/local/sbin/rproxy-rollback（每次安装/升级时更新）
+#
+# 只依赖本机文件，不 source /opt/rproxy-server 下的任何脚本，程序被升级弄坏时仍能工作。
+#
+# 用法：
+#   rproxy-rollback                   恢复到最近一次快照（会要求确认）
+#   rproxy-rollback list              列出快照
+#   rproxy-rollback <快照名>          恢复到指定快照
+#   rproxy-rollback --yes [快照名]    不确认直接恢复（自动回滚使用）
+#   rproxy-rollback --reason <原因>   恢复后写入告警文件时使用的原因
+#   rproxy-rollback create <说明>     创建快照，成功时在标准输出打印快照名
+#   rproxy-rollback check [--xhttp]   本机自检：Xray/Nginx 运行、首页 200、
+#                                     加 --xhttp 时经 Nginx 访问 XHTTP 路径应为 400（502 表示 Xray 不通）
+# ============================================================================
+
+set -uo pipefail
+
+# 仅测试用：把所有路径挂到一个临时根目录下，在真机上为空
+ROOT="${RPROXY_ROOT:-}"
+
+STATE_DIR="${ROOT}/var/lib/rproxy-server"
+SNAP_DIR="${STATE_DIR}/snapshots"
+INSTALL_DIR="${ROOT}/opt/rproxy-server"
+SERVER_CFG="${INSTALL_DIR}/config/server.json"
+ALERT_FILE="${INSTALL_DIR}/data/xray-update-alert.json"
+KEEP=3
+
+# 纳入快照的路径（相对于 /，不存在的自动跳过）；systemd 单元另按通配符收集。
+# 不含证书（/etc/ssl、acme.sh）与站点目录：回滚不应把续期后的证书换回旧的，站点也不随版本变化
+SNAP_PATHS=(
+    opt/rproxy-server
+    usr/local/bin/rproxy-server
+    usr/local/bin/xray
+    usr/local/share/xray
+    usr/local/etc/xray
+    etc/systemd/system/xray.service
+    etc/systemd/system/xray@.service
+    etc/systemd/system/xray.service.d
+    etc/systemd/system/xray@.service.d
+    etc/nginx/conf.d/rproxy-server.conf
+)
+SNAP_EXCLUDES=(
+    opt/rproxy-server/logs
+)
+
+msg()  { echo "[回滚工具] $*"; }
+err()  { echo "[回滚工具][错误] $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# 读取 meta 文件中的某个字段；文件缺失时为空
+meta_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+
+current_version() { cat "${INSTALL_DIR}/VERSION" 2>/dev/null | tr -d '[:space:]'; }
+
+xray_version() {
+    "${ROOT}/usr/local/bin/xray" version 2>/dev/null | head -n 1 | awk '{print $2}'
+}
+
+snapshot_names() {
+    ls -1t "${SNAP_DIR}"/*.tar.gz 2>/dev/null | sed 's#.*/##; s#\.tar\.gz$##'
+}
+
+# ---------- 本机自检 ----------
+cmd_check() {
+    local want_xhttp=0
+    [[ "${1:-}" == "--xhttp" ]] && want_xhttp=1
+    systemctl is-active --quiet xray  || { err "自检：xray 未运行"; return 1; }
+    systemctl is-active --quiet nginx || { err "自检：nginx 未运行"; return 1; }
+    local domain path code
+    domain=$(jq -r '.domain // empty' "$SERVER_CFG" 2>/dev/null)
+    path=$(jq -r '.ws_path // empty' "$SERVER_CFG" 2>/dev/null)
+    [[ -n "$domain" && -n "$path" ]] || { err "自检：server.json 缺少 domain 或 ws_path"; return 1; }
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
+               --resolve "${domain}:443:127.0.0.1" "https://${domain}/" 2>/dev/null)
+    [[ "$code" == "200" ]] || { err "自检：首页返回 ${code:-无响应}（应为 200）"; return 1; }
+    if [[ $want_xhttp -eq 1 ]]; then
+        code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
+                   --resolve "${domain}:443:127.0.0.1" "https://${domain}${path}/" 2>/dev/null)
+        [[ "$code" == "400" ]] || { err "自检：XHTTP 路径返回 ${code:-无响应}（应为 400，502 表示 Xray 不通）"; return 1; }
+    fi
+    msg "自检通过"
+}
+
+# ---------- 创建快照 ----------
+cmd_create() {
+    local reason="${1:-manual}"
+    mkdir -p "${SNAP_DIR}" || die "无法创建 ${SNAP_DIR}"
+
+    local paths=() p
+    for p in "${SNAP_PATHS[@]}"; do
+        [[ -e "${ROOT}/${p}" ]] && paths+=("$p")
+    done
+    while IFS= read -r p; do
+        paths+=("$p")
+    done < <(cd "${ROOT}/" && ls -d etc/systemd/system/rproxy-server-*.service etc/systemd/system/rproxy-server-*.timer 2>/dev/null)
+    [[ ${#paths[@]} -gt 0 ]] || die "没有可备份的文件"
+
+    local need avail
+    need=$(cd "${ROOT}/" && du -sck "${paths[@]}" 2>/dev/null | tail -n 1 | cut -f1)
+    avail=$(df -Pk "${SNAP_DIR}" | awk 'NR==2 {print $4}')
+    if (( avail < need + 51200 )); then
+        err "磁盘空间不足：需要约 $(( (need + 51200) / 1024 ))MB，可用 $(( avail / 1024 ))MB"
+        return 1
+    fi
+
+    local name tmp excl=()
+    name=$(date +%Y%m%d-%H%M%S)
+    tmp="${SNAP_DIR}/${name}.tar.gz.part"
+    for p in "${SNAP_EXCLUDES[@]}"; do excl+=(--exclude="$p"); done
+    if ! tar -czf "$tmp" -C "${ROOT}/" "${excl[@]}" "${paths[@]}" 2>/dev/null; then
+        rm -f "$tmp"
+        err "打包快照失败"
+        return 1
+    fi
+    mv -f "$tmp" "${SNAP_DIR}/${name}.tar.gz"
+
+    local units
+    units=$(systemctl list-unit-files 'rproxy-server-*' 'xray.service' \
+                --state=enabled --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+    {
+        echo "created=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "reason=${reason}"
+        echo "version=$(current_version)"
+        echo "xray=$(xray_version)"
+        echo "units=${units% }"
+    } > "${SNAP_DIR}/${name}.meta"
+
+    snapshot_names | tail -n "+$((KEEP + 1))" | while read -r old; do
+        rm -f "${SNAP_DIR}/${old}.tar.gz" "${SNAP_DIR}/${old}.meta"
+    done
+
+    echo "$name"
+}
+
+# ---------- 列出快照 ----------
+cmd_list() {
+    local names
+    names=$(snapshot_names)
+    if [[ -z "$names" ]]; then
+        msg "没有快照（${SNAP_DIR}）"
+        return 0
+    fi
+    printf '%-17s %-20s %-8s %-10s %s\n' "快照名" "创建时间" "RProxy" "Xray" "说明"
+    local n m
+    for n in $names; do
+        m="${SNAP_DIR}/${n}.meta"
+        printf '%-17s %-20s %-8s %-10s %s\n' "$n" \
+            "$(meta_get "$m" created)" "$(meta_get "$m" version)" \
+            "$(meta_get "$m" xray)" "$(meta_get "$m" reason)"
+    done
+}
+
+write_alert() {
+    mkdir -p "$(dirname "${ALERT_FILE}")"
+    cat > "${ALERT_FILE}" <<EOF
+{
+  "active": true,
+  "time": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "message": "$1"
+}
+EOF
+}
+
+# ---------- 恢复快照 ----------
+cmd_restore() {
+    local assume_yes="$1" name="$2" reason="$3"
+    [[ -n "${ROOT}" || $EUID -eq 0 ]] || die "请用 root 运行"
+
+    [[ -n "$name" ]] || name=$(snapshot_names | head -n 1)
+    [[ -n "$name" ]] || die "没有可用的快照（${SNAP_DIR}）"
+    local archive="${SNAP_DIR}/${name}.tar.gz" meta="${SNAP_DIR}/${name}.meta"
+    [[ -f "$archive" ]] || die "快照不存在：${name}（用 rproxy-rollback list 查看）"
+
+    local snap_ver snap_xray cur_ver cur_xray
+    snap_ver=$(meta_get "$meta" version)
+    snap_xray=$(meta_get "$meta" xray)
+    cur_ver=$(current_version)
+    cur_xray=$(xray_version)
+
+    msg "快照：${name}（$(meta_get "$meta" created)，$(meta_get "$meta" reason)）"
+    msg "RProxy ${cur_ver:-未知} → ${snap_ver:-未知}，Xray ${cur_xray:-未知} → ${snap_xray:-未知}"
+    msg "注意：server.json 也会恢复到快照时的状态"
+    if [[ "$assume_yes" != "1" ]]; then
+        local ans
+        read -r -p "确认恢复？(yes/no): " ans
+        [[ "$ans" == "yes" ]] || { msg "已取消"; return 0; }
+    fi
+
+    tar -tzf "$archive" >/dev/null 2>&1 || die "快照文件损坏，未做任何改动：${archive}"
+
+    msg "停止自动更新，避免恢复期间被打断"
+    systemctl stop rproxy-server-update.timer 2>/dev/null || true
+
+    rm -rf "${INSTALL_DIR}/scripts" "${ROOT}/etc/systemd/system/xray.service.d"
+    rm -f "${ROOT}"/etc/systemd/system/rproxy-server-*.service "${ROOT}"/etc/systemd/system/rproxy-server-*.timer
+
+    msg "解压快照"
+    # GNU tar 默认先删除已存在的同名文件再新建，正在执行的脚本继续使用已打开的旧文件
+    tar -xzf "$archive" -C "${ROOT}/" || die "解压失败，请再次执行本命令重试"
+    find "${ROOT}/etc/systemd/system" -xtype l -name 'rproxy-server-*' -delete 2>/dev/null || true
+
+    msg "重新加载 systemd 与服务"
+    systemctl daemon-reload
+    local u
+    for u in $(meta_get "$meta" units); do
+        systemctl enable "$u" >/dev/null 2>&1 || true
+    done
+    if nginx -t >/dev/null 2>&1; then
+        systemctl reload nginx 2>/dev/null || true
+    else
+        err "恢复后的 nginx 配置检查未通过，请执行 nginx -t 查看"
+    fi
+    systemctl restart xray 2>/dev/null || true
+    systemctl start rproxy-server-update.timer 2>/dev/null || true
+
+    mkdir -p "${STATE_DIR}"
+    if [[ -n "$cur_ver" && "$cur_ver" != "$snap_ver" ]]; then
+        echo "$cur_ver" > "${STATE_DIR}/hold-rproxy-version"
+    fi
+    if [[ -n "$cur_xray" && "$cur_xray" != "$snap_xray" ]]; then
+        echo "$cur_xray" > "${STATE_DIR}/hold-xray-version"
+    fi
+
+    local text="已回滚到快照 ${name}（RProxy ${cur_ver:-?} → ${snap_ver:-?}，Xray ${cur_xray:-?} → ${snap_xray:-?}）。"
+    [[ -n "$reason" ]] && text+="原因：${reason}。"
+    text+="自动更新将跳过出问题的版本，直到发布更新的版本。"
+    write_alert "$text"
+
+    msg "验证"
+    sleep 2
+    cmd_check || err "回滚后自检未通过，请检查 journalctl -u xray 与 nginx -t"
+    msg "回滚完成"
+}
+
+main() {
+    local assume_yes=0 reason="" name=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            list)     cmd_list; return ;;
+            create)   shift; cmd_create "${1:-manual}"; return ;;
+            check)    shift; cmd_check "${1:-}"; return ;;
+            --yes|-y) assume_yes=1 ;;
+            --reason) shift; reason="${1:-}" ;;
+            -h|--help|help)
+                sed -n '/^# 用法：/,/^# =====/p' "$0" | sed 's/^# \{0,1\}//; /^=====/d'
+                return ;;
+            *)        name="$1" ;;
+        esac
+        shift
+    done
+    cmd_restore "$assume_yes" "$name" "$reason"
+}
+
+main "$@"

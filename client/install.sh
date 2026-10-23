@@ -497,6 +497,8 @@ deploy_scripts_and_configs() {
     cp "${BUILD_DIR}/scripts/system-optimize.sh" "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/load-cn-ips.sh" "${SCRIPTS_DIR}/"
     cp "${BUILD_DIR}/scripts/load-static-ips.sh" "${SCRIPTS_DIR}/"
+    # 本机快照与离线回滚工具（升级时会先用它打快照）
+    install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" /usr/local/sbin/rproxy-rollback
     # install.sh 本身也部署到 INSTALL_DIR（升级时需要重新运行）
     cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
     chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"
@@ -710,6 +712,40 @@ action_install_fresh() {
     apply_network_config
 }
 
+# ---------- 升级保护：本机快照 + 出问题自动离线回滚（1.7.0）----------
+# 升级一旦出问题旁路由往往就上不了网，所以回滚只依赖本机快照，不依赖网络。
+# 这些函数放在 install.sh 而不是 common.sh：WebUI 触发升级时 source 的是本机旧版 common.sh。
+readonly ROLLBACK_BIN="/usr/local/sbin/rproxy-rollback"
+readonly HOLD_RPROXY_FILE="/var/lib/rproxy-gw/hold-rproxy-version"
+UPGRADE_SNAPSHOT=""   # 升级前快照名；非空表示"中途失败要自动回滚"
+
+# 升级后代理连通性：服务刚重启需要几秒，最多试 3 次
+upgrade_proxy_ok() {
+    local i
+    for i in 1 2 3; do
+        proxy_health_check 10808 && return 0
+        sleep 5
+    done
+    return 1
+}
+
+# upgrade_auto_rollback <原因> <快照名>
+upgrade_auto_rollback() {
+    log_error "$1，自动回滚到升级前快照 $2"
+    "$ROLLBACK_BIN" --yes --reason "$1" "$2" || log_error "自动回滚失败，请 SSH 登录后执行 rproxy-rollback"
+    # WebUI 触发的升级靠这一行判断结束（回滚后运行的是旧版 WebUI，只认"升级完成（"标志）
+    echo "升级完成（结果：已自动回滚到升级前状态，原因：$1）"
+}
+
+# 升级中途任何失败（die / set -e）都会走到这里
+upgrade_exit_trap() {
+    local rc=$?
+    [[ $rc -ne 0 && -n "$UPGRADE_SNAPSHOT" ]] || return 0
+    local snap="$UPGRADE_SNAPSHOT"
+    UPGRADE_SNAPSHOT=""
+    upgrade_auto_rollback "升级过程出错（退出码 ${rc}）" "$snap"
+}
+
 action_upgrade() {
     require_root
     check_arch
@@ -723,6 +759,25 @@ action_upgrade() {
 
     # 升级时也确保 NTP 启用（旧版安装可能未开启）
     enable_ntp
+
+    # 先下载新版（只写入临时构建目录，不改动系统）
+    fetch_source
+
+    # 检查 VERSION 是否有变化
+    local old_ver new_ver
+    old_ver=$(cat "${INSTALL_DIR}/VERSION")
+    new_ver=$(cat "${BUILD_DIR}/VERSION")
+    log_info "本地版本：${old_ver}    最新版本：${new_ver}"
+
+    # 部署回滚工具并打本机快照：从这里起，任何失败都能离线回到升级前
+    install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" "$ROLLBACK_BIN"
+    local pre_ok=0
+    proxy_health_check 10808 && pre_ok=1
+    log_step "创建升级前快照（出问题时可执行 rproxy-rollback 离线恢复）"
+    UPGRADE_SNAPSHOT=$("$ROLLBACK_BIN" create "升级前 ${old_ver} → ${new_ver}") \
+        || die "快照创建失败（多半是磁盘空间不足），为安全起见取消升级，系统未做改动"
+    log_done "快照：${UPGRADE_SNAPSHOT}"
+    trap upgrade_exit_trap EXIT
 
     log_info "开始升级，备份当前配置..."
     local backup_path
@@ -764,14 +819,6 @@ action_upgrade() {
             log_info "webui.json 已回填 update_hour/update_minute（旧部署兼容）"
         fi
     fi
-
-    fetch_source
-
-    # 检查 VERSION 是否有变化
-    local old_ver new_ver
-    old_ver=$(cat "${INSTALL_DIR}/VERSION")
-    new_ver=$(cat "${BUILD_DIR}/VERSION")
-    log_info "本地版本：${old_ver}    最新版本：${new_ver}"
 
     # ===================== 按需重做：避免无谓的下载 =====================
     # 1) WebUI：版本号一致就跳过部署（同 tag 的预编译产物字节级相同）
@@ -867,6 +914,16 @@ action_upgrade() {
     log_step "检查节点能否自动迁移到 VLESS + XHTTP"
     "${BIN_DIR}/webui" migrate-xhttp || log_warn "XHTTP 迁移检查失败，不影响现有连接，每日更新时会再试"
 
+    # 升级前代理是通的、升级后不通 → 整体回滚到升级前快照
+    # （升级前本来就不通则无法判断是不是升级造成的，不回滚）
+    local snap="$UPGRADE_SNAPSHOT"
+    UPGRADE_SNAPSHOT=""   # 后续不再由退出陷阱回滚
+    if [[ $pre_ok -eq 1 ]] && ! upgrade_proxy_ok; then
+        upgrade_auto_rollback "升级到 ${new_ver} 后代理连不通" "$snap"
+        exit 1
+    fi
+    rm -f "$HOLD_RPROXY_FILE"
+
     # 清理旧版升级遗留的 Go/Node 工具链
     remove_legacy_build_toolchain
     prune_backups 5
@@ -908,7 +965,8 @@ do_uninstall_silent() {
            /etc/wireguard/wg0.conf \
            /etc/systemd/system/rproxy-gw-*.service \
            /etc/systemd/system/rproxy-gw-*.timer \
-           /etc/sysctl.d/99-rproxy-*.conf
+           /etc/sysctl.d/99-rproxy-*.conf \
+           /usr/local/sbin/rproxy-rollback /var/lib/rproxy-gw
 
     systemctl daemon-reload
 

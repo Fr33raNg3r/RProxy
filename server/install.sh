@@ -430,6 +430,8 @@ deploy_files() {
 
     cp "${BUILD_DIR}/scripts/rproxy-server" /usr/local/bin/rproxy-server
     chmod +x /usr/local/bin/rproxy-server
+    # 本机快照、回滚与自检工具（升级时会先用它打快照）
+    install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" /usr/local/sbin/rproxy-rollback
 
     # 复制 nginx 模板到 scripts 目录，方便 rproxy-server change-domain 调用
     cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
@@ -672,6 +674,37 @@ action_install_fresh() {
     show_completion_info
 }
 
+# ---------- 升级保护：本机快照 + 自检 + 出问题自动回滚（1.7.0）----------
+# 这些函数放在 install.sh 而不是 common.sh：rproxy-server upgrade 会 source 本机旧版 common.sh。
+readonly ROLLBACK_BIN="/usr/local/sbin/rproxy-rollback"
+readonly HOLD_RPROXY_FILE="/var/lib/rproxy-server/hold-rproxy-version"
+UPGRADE_SNAPSHOT=""   # 升级前快照名；非空表示"中途失败要自动回滚"
+
+# 升级后本机自检（含 XHTTP）：服务刚重启需要几秒，最多试 3 次
+upgrade_check_ok() {
+    local i
+    for i in 1 2 3; do
+        "$ROLLBACK_BIN" check --xhttp && return 0
+        sleep 5
+    done
+    return 1
+}
+
+# upgrade_auto_rollback <原因> <快照名>
+upgrade_auto_rollback() {
+    log_error "$1，自动回滚到升级前快照 $2"
+    "$ROLLBACK_BIN" --yes --reason "$1" "$2" || log_error "自动回滚失败，请执行 rproxy-rollback 手动恢复"
+}
+
+# 升级中途任何失败（die / set -e）都会走到这里
+upgrade_exit_trap() {
+    local rc=$?
+    [[ $rc -ne 0 && -n "$UPGRADE_SNAPSHOT" ]] || return 0
+    local snap="$UPGRADE_SNAPSHOT"
+    UPGRADE_SNAPSHOT=""
+    upgrade_auto_rollback "升级过程出错（退出码 ${rc}）" "$snap"
+}
+
 action_upgrade() {
     require_root
     check_arch
@@ -688,6 +721,16 @@ action_upgrade() {
     old_ver=$(cat "${INSTALL_DIR}/VERSION")
     new_ver=$(cat "${BUILD_DIR}/VERSION")
     log_info "本地版本：${old_ver}    最新版本：${new_ver}"
+
+    # 部署回滚工具并打本机快照：从这里起，任何失败都能回到升级前
+    install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" "$ROLLBACK_BIN"
+    local pre_ok=0
+    "$ROLLBACK_BIN" check && pre_ok=1
+    log_step "创建升级前快照（出问题时可执行 rproxy-rollback 恢复）"
+    UPGRADE_SNAPSHOT=$("$ROLLBACK_BIN" create "升级前 ${old_ver} → ${new_ver}") \
+        || die "快照创建失败（多半是磁盘空间不足），为安全起见取消升级，系统未做改动"
+    log_done "快照：${UPGRADE_SNAPSHOT}"
+    trap upgrade_exit_trap EXIT
 
     # 升级 Xray
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
@@ -715,6 +758,15 @@ action_upgrade() {
 
     restart_service xray
     systemctl reload nginx
+
+    # 升级前自检通过、升级后（含 XHTTP）不通过 → 整体回滚到升级前快照
+    local snap="$UPGRADE_SNAPSHOT"
+    UPGRADE_SNAPSHOT=""   # 后续不再由退出陷阱回滚
+    if [[ $pre_ok -eq 1 ]] && ! upgrade_check_ok; then
+        upgrade_auto_rollback "升级到 ${new_ver} 后本机自检未通过" "$snap"
+        exit 1
+    fi
+    rm -f "$HOLD_RPROXY_FILE"
 
     log_done "升级完成（${old_ver} → ${new_ver}）"
 }
@@ -756,6 +808,7 @@ do_uninstall_silent() {
     log_step "删除文件"
     rm -rf "${INSTALL_DIR}" "${SSL_DIR}" "${WEB_ROOT}" \
            /usr/local/bin/rproxy-server \
+           /usr/local/sbin/rproxy-rollback /var/lib/rproxy-server \
            /etc/systemd/system/rproxy-server-*.service \
            /etc/systemd/system/rproxy-server-*.timer
 

@@ -6,8 +6,8 @@ import (
 	"os"
 )
 
-// xrayAlertPath Xray 自动更新兼容性告警标志文件，由 update-daemon.sh 在
-// 检测到新版无法加载现有配置并回滚后写入。
+// xrayAlertPath 自动更新回滚告警标志文件，由 rproxy-rollback 在
+// RProxy 升级或 Xray 升级出问题、回滚到升级前快照后写入。
 const xrayAlertPath = "/opt/rproxy-gw/data/xray-update-alert.json"
 
 // GetXrayAlert GET /api/xray/alert

@@ -1,0 +1,268 @@
+#!/bin/bash
+# ============================================================================
+# rproxy-rollback：RProxy 客户端本机快照与离线回滚
+# 安装位置：/usr/local/sbin/rproxy-rollback（每次安装/升级时更新）
+#
+# 升级一旦出问题，旁路由往往就上不了网，无法再从网上下载旧版本。
+# 因此本工具只依赖本机文件：不联网，也不 source /opt/rproxy-gw 下的任何脚本，
+# 程序被升级弄坏时它仍能工作。
+#
+# 用法：
+#   rproxy-rollback                   恢复到最近一次快照（会要求确认）
+#   rproxy-rollback list              列出快照
+#   rproxy-rollback <快照名>          恢复到指定快照
+#   rproxy-rollback --yes [快照名]    不确认直接恢复（自动回滚使用）
+#   rproxy-rollback --reason <原因>   恢复后写入 WebUI 告警时使用的原因
+#   rproxy-rollback create <说明>     创建快照，成功时在标准输出打印快照名
+# ============================================================================
+
+set -uo pipefail
+
+# 仅测试用：把所有路径挂到一个临时根目录下，在真机上为空
+ROOT="${RPROXY_ROOT:-}"
+
+STATE_DIR="${ROOT}/var/lib/rproxy-gw"
+SNAP_DIR="${STATE_DIR}/snapshots"
+INSTALL_DIR="${ROOT}/opt/rproxy-gw"
+ALERT_FILE="${INSTALL_DIR}/data/xray-update-alert.json"
+KEEP=3
+
+# 纳入快照的路径（相对于 /，不存在的自动跳过）；systemd 单元另按通配符收集
+SNAP_PATHS=(
+    opt/rproxy-gw
+    var/www/rproxy-gw
+    usr/local/bin/xray
+    usr/local/share/xray
+    usr/local/etc/xray
+    etc/systemd/system/xray.service
+    etc/systemd/system/xray@.service
+    etc/systemd/system/xray.service.d
+    etc/systemd/system/xray@.service.d
+    etc/nftables.conf
+    etc/logrotate.d/rproxy-gw
+    etc/wireguard/wg0.conf
+)
+# 不进快照：旧的配置备份、日志、可重新下载的规则数据
+SNAP_EXCLUDES=(
+    opt/rproxy-gw/backup
+    opt/rproxy-gw/logs
+    opt/rproxy-gw/data/geo
+)
+
+msg()  { echo "[回滚工具] $*"; }
+err()  { echo "[回滚工具][错误] $*" >&2; }
+die()  { err "$*"; exit 1; }
+
+# 读取 meta 文件中的某个字段；文件缺失时为空
+meta_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1; }
+
+current_version() { cat "${INSTALL_DIR}/VERSION" 2>/dev/null | tr -d '[:space:]'; }
+
+# Xray 版本号，如 26.10.21；取不到时为空
+xray_version() {
+    "${ROOT}/usr/local/bin/xray" version 2>/dev/null | head -n 1 | awk '{print $2}'
+}
+
+# 列出存在的快照名，最新的在前
+snapshot_names() {
+    ls -1t "${SNAP_DIR}"/*.tar.gz 2>/dev/null | sed 's#.*/##; s#\.tar\.gz$##'
+}
+
+# ---------- 创建快照 ----------
+cmd_create() {
+    local reason="${1:-manual}"
+    mkdir -p "${SNAP_DIR}" || die "无法创建 ${SNAP_DIR}"
+
+    local paths=() p
+    for p in "${SNAP_PATHS[@]}"; do
+        [[ -e "${ROOT}/${p}" ]] && paths+=("$p")
+    done
+    while IFS= read -r p; do
+        paths+=("$p")
+    done < <(cd "${ROOT}/" && ls -d etc/systemd/system/rproxy-gw-*.service etc/systemd/system/rproxy-gw-*.timer 2>/dev/null)
+    [[ ${#paths[@]} -gt 0 ]] || die "没有可备份的文件"
+
+    # 空间检查：按未压缩大小估算（偏大，留足余量），不够就拒绝，由调用方决定是否继续升级
+    local need avail
+    need=$(cd "${ROOT}/" && du -sck "${paths[@]}" 2>/dev/null | tail -n 1 | cut -f1)
+    avail=$(df -Pk "${SNAP_DIR}" | awk 'NR==2 {print $4}')
+    if (( avail < need + 51200 )); then
+        err "磁盘空间不足：需要约 $(( (need + 51200) / 1024 ))MB，可用 $(( avail / 1024 ))MB"
+        return 1
+    fi
+
+    local name tmp excl=()
+    name=$(date +%Y%m%d-%H%M%S)
+    tmp="${SNAP_DIR}/${name}.tar.gz.part"
+    for p in "${SNAP_EXCLUDES[@]}"; do excl+=(--exclude="$p"); done
+    if ! tar -czf "$tmp" -C "${ROOT}/" "${excl[@]}" "${paths[@]}" 2>/dev/null; then
+        rm -f "$tmp"
+        err "打包快照失败"
+        return 1
+    fi
+    mv -f "$tmp" "${SNAP_DIR}/${name}.tar.gz"
+
+    # 记录当时已启用的单元，恢复时按旧版单元重新 enable（升级可能改过 [Install]）
+    local units
+    units=$(systemctl list-unit-files 'rproxy-gw-*' 'xray.service' 'wg-quick@*' \
+                --state=enabled --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ' ')
+    {
+        echo "created=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "reason=${reason}"
+        echo "version=$(current_version)"
+        echo "xray=$(xray_version)"
+        echo "units=${units% }"
+    } > "${SNAP_DIR}/${name}.meta"
+
+    # 只保留最近 KEEP 份
+    snapshot_names | tail -n "+$((KEEP + 1))" | while read -r old; do
+        rm -f "${SNAP_DIR}/${old}.tar.gz" "${SNAP_DIR}/${old}.meta"
+    done
+
+    echo "$name"
+}
+
+# ---------- 列出快照 ----------
+cmd_list() {
+    local names
+    names=$(snapshot_names)
+    if [[ -z "$names" ]]; then
+        msg "没有快照（${SNAP_DIR}）"
+        return 0
+    fi
+    printf '%-17s %-20s %-8s %-10s %s\n' "快照名" "创建时间" "RProxy" "Xray" "说明"
+    local n m
+    for n in $names; do
+        m="${SNAP_DIR}/${n}.meta"
+        printf '%-17s %-20s %-8s %-10s %s\n' "$n" \
+            "$(meta_get "$m" created)" "$(meta_get "$m" version)" \
+            "$(meta_get "$m" xray)" "$(meta_get "$m" reason)"
+    done
+}
+
+# 写 WebUI 告警（沿用 Xray 告警的文件与格式，旧版 WebUI 也能显示）
+write_alert() {
+    mkdir -p "$(dirname "${ALERT_FILE}")"
+    cat > "${ALERT_FILE}" <<EOF
+{
+  "active": true,
+  "time": "$(date '+%Y-%m-%d %H:%M:%S')",
+  "message": "$1"
+}
+EOF
+}
+
+# ---------- 恢复快照 ----------
+cmd_restore() {
+    local assume_yes="$1" name="$2" reason="$3"
+    [[ -n "${ROOT}" || $EUID -eq 0 ]] || die "请用 root 运行"
+
+    [[ -n "$name" ]] || name=$(snapshot_names | head -n 1)
+    [[ -n "$name" ]] || die "没有可用的快照（${SNAP_DIR}）"
+    local archive="${SNAP_DIR}/${name}.tar.gz" meta="${SNAP_DIR}/${name}.meta"
+    [[ -f "$archive" ]] || die "快照不存在：${name}（用 rproxy-rollback list 查看）"
+
+    local snap_ver snap_xray cur_ver cur_xray
+    snap_ver=$(meta_get "$meta" version)
+    snap_xray=$(meta_get "$meta" xray)
+    cur_ver=$(current_version)
+    cur_xray=$(xray_version)
+
+    msg "快照：${name}（$(meta_get "$meta" created)，$(meta_get "$meta" reason)）"
+    msg "RProxy ${cur_ver:-未知} → ${snap_ver:-未知}，Xray ${cur_xray:-未知} → ${snap_xray:-未知}"
+    msg "注意：配置也会恢复到快照时的状态，之后在 WebUI 做的修改会丢失"
+    if [[ "$assume_yes" != "1" ]]; then
+        local ans
+        read -r -p "确认恢复？(yes/no): " ans
+        [[ "$ans" == "yes" ]] || { msg "已取消"; return 0; }
+    fi
+
+    # 先校验压缩包完整，再动任何文件：解压失败时现有系统保持原样
+    tar -tzf "$archive" >/dev/null 2>&1 || die "快照文件损坏，未做任何改动：${archive}"
+
+    msg "停止看门狗与自动更新，避免恢复期间被打断"
+    systemctl stop rproxy-gw-watchdog.timer rproxy-gw-update.timer 2>/dev/null || true
+
+    # 快照完整接管的程序目录与单元：先清掉，避免新版多出的文件残留
+    rm -rf "${INSTALL_DIR}/bin" "${INSTALL_DIR}/scripts" "${ROOT}/var/www/rproxy-gw" \
+           "${ROOT}/etc/systemd/system/xray.service.d"
+    rm -f "${ROOT}"/etc/systemd/system/rproxy-gw-*.service "${ROOT}"/etc/systemd/system/rproxy-gw-*.timer
+
+    msg "解压快照"
+    # GNU tar 默认先删除已存在的同名文件再新建（不是原地改写）：正在执行的 install.sh /
+    # update-daemon.sh 与运行中的程序继续使用已打开的旧文件，不会读到被改写的内容。
+    # 不能加 --unlink-first：它会尝试删除已存在的非空目录而报错
+    tar -xzf "$archive" -C "${ROOT}/" || die "解压失败，请再次执行本命令重试"
+    # 指向已删除单元的 enable 链接
+    find "${ROOT}/etc/systemd/system" -xtype l -name 'rproxy-gw-*' -delete 2>/dev/null || true
+
+    msg "重新加载 systemd 与规则"
+    systemctl daemon-reload
+    local u
+    for u in $(meta_get "$meta" units); do
+        systemctl enable "$u" >/dev/null 2>&1 || true
+    done
+    nft -f "${ROOT}/etc/nftables.conf" || err "nftables 规则加载失败"
+    systemctl restart rproxy-gw-load-cn-ips.service rproxy-gw-load-static-ips.service 2>/dev/null || true
+    systemctl start rproxy-gw-iproute.service 2>/dev/null || true
+
+    msg "重启服务"
+    systemctl restart rproxy-gw-mosdns 2>/dev/null || true
+    sleep 2
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart rproxy-gw-webui 2>/dev/null || true
+    if systemctl is-active --quiet wg-quick@wg0; then
+        systemctl restart wg-quick@wg0 || true
+    fi
+    systemctl start rproxy-gw-watchdog.timer rproxy-gw-update.timer 2>/dev/null || true
+
+    # 记录问题版本：自动更新会跳过它，直到发布了更新的版本
+    mkdir -p "${STATE_DIR}"
+    if [[ -n "$cur_ver" && "$cur_ver" != "$snap_ver" ]]; then
+        echo "$cur_ver" > "${STATE_DIR}/hold-rproxy-version"
+    fi
+    if [[ -n "$cur_xray" && "$cur_xray" != "$snap_xray" ]]; then
+        echo "$cur_xray" > "${STATE_DIR}/hold-xray-version"
+    fi
+
+    local text="已回滚到快照 ${name}（RProxy ${cur_ver:-?} → ${snap_ver:-?}，Xray ${cur_xray:-?} → ${snap_xray:-?}）。"
+    [[ -n "$reason" ]] && text+="原因：${reason}。"
+    text+="自动更新将跳过出问题的版本，直到发布更新的版本。"
+    write_alert "$text"
+
+    msg "验证"
+    local s
+    for s in xray rproxy-gw-mosdns rproxy-gw-webui rproxy-gw-iproute; do
+        printf '  %-20s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null)"
+    done
+    sleep 3
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+               --socks5-hostname 127.0.0.1:10808 https://www.google.com/generate_204 2>/dev/null)
+    if [[ "$code" == "204" ]]; then
+        msg "代理连通性：正常"
+    else
+        err "代理连通性：异常（HTTP ${code:-无响应}），可先执行 /opt/rproxy-gw/scripts/emergency-stop.sh 恢复直连"
+    fi
+    msg "回滚完成"
+}
+
+main() {
+    local assume_yes=0 reason="" name=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            list)     cmd_list; return ;;
+            create)   shift; cmd_create "${1:-manual}"; return ;;
+            --yes|-y) assume_yes=1 ;;
+            --reason) shift; reason="${1:-}" ;;
+            -h|--help|help)
+                sed -n '/^# 用法：/,/^# =====/p' "$0" | sed 's/^# \{0,1\}//; /^=====/d'
+                return ;;
+            *)        name="$1" ;;
+        esac
+        shift
+    done
+    cmd_restore "$assume_yes" "$name" "$reason"
+}
+
+main "$@"
