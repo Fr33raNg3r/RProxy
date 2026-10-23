@@ -22,10 +22,14 @@ func TestMigrateLegacyNodes(t *testing.T) {
 		return n.ID == "ok"
 	}
 
-	changed := migrateLegacyNodes(nodes, probe)
+	changed, failed := migrateLegacyNodes(nodes, probe)
 
 	if len(changed) != 1 || changed[0] != "ok" {
 		t.Fatalf("应只迁移 [ok]，实际 %v", changed)
+	}
+	// 探测失败的要单独报出来，不能和"没有候选节点"混为一谈
+	if len(failed) != 1 || failed[0] != "down" {
+		t.Fatalf("探测失败的应为 [down]，实际 %v", failed)
 	}
 	if len(probed) != 2 || probed[0] != "ok" || probed[1] != "down" {
 		t.Fatalf("应只探测空协议的节点 [ok down]，实际 %v", probed)

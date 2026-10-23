@@ -113,7 +113,7 @@ func probeNodeOnPort(n config.Node, port int) bool {
 	}()
 
 	// 等 SOCKS 端口就绪（最多约 3 秒）
-	addr := fmt.Sprintf("127.0.0.1:%d", failbackSocksPort)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	ready := false
 	for i := 0; i < 30; i++ {
 		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
@@ -126,7 +126,7 @@ func probeNodeOnPort(n config.Node, port int) bool {
 	if !ready {
 		return false
 	}
-	_, err = TestNode(failbackSocksPort)
+	_, err = TestNode(port)
 	return err == nil
 }
 

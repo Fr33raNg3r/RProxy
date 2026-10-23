@@ -12,9 +12,8 @@ const migrateSocksPort = 10811
 
 // migrateLegacyNodes 把 protocol 为空的旧节点逐个改成 vless-xhttp 探测，
 // 探测通过的就地改为 vless-xhttp，失败的保持为空（服务端可能还没升级，下次再试）。
-// 用户明确选择 vmess-ws 的节点不碰。返回被迁移的节点 ID。
-func migrateLegacyNodes(nodes []config.Node, probe func(config.Node) bool) []string {
-	var changed []string
+// 用户明确选择 vmess-ws 的节点不碰。返回被迁移的、以及探测未通过的节点 ID。
+func migrateLegacyNodes(nodes []config.Node, probe func(config.Node) bool) (changed, failed []string) {
 	for i := range nodes {
 		if nodes[i].Protocol != "" {
 			continue
@@ -24,9 +23,24 @@ func migrateLegacyNodes(nodes []config.Node, probe func(config.Node) bool) []str
 		if probe(candidate) {
 			nodes[i].Protocol = config.ProtocolVLESSXHTTP
 			changed = append(changed, nodes[i].ID)
+		} else {
+			failed = append(failed, nodes[i].ID)
 		}
 	}
-	return changed
+	return changed, failed
+}
+
+// nodeNames 按 ID 列出节点名称，用于日志
+func nodeNames(nodes []config.Node, ids []string) string {
+	var names []string
+	for _, id := range ids {
+		for _, n := range nodes {
+			if n.ID == id {
+				names = append(names, n.Name)
+			}
+		}
+	}
+	return strings.Join(names, "、")
 }
 
 // MigrateXHTTP 由 install.sh upgrade 和每日更新调用：
@@ -37,30 +51,32 @@ func MigrateXHTTP() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	changed := migrateLegacyNodes(nodes, func(n config.Node) bool {
+	changed, failed := migrateLegacyNodes(nodes, func(n config.Node) bool {
 		return probeNodeOnPort(n, migrateSocksPort)
 	})
+	var notes []string
+	if len(failed) > 0 {
+		notes = append(notes, fmt.Sprintf("XHTTP 探测未通过、暂保持 WS：%s（服务端可能尚未升级到 1.6.0，或节点暂时不通；每日更新时会再试）",
+			nodeNames(nodes, failed)))
+	}
 	if len(changed) == 0 {
-		return "没有需要迁移到 XHTTP 的节点（或服务端尚未支持）", nil
+		if len(notes) == 0 {
+			return "没有待迁移的旧节点", nil
+		}
+		return strings.Join(notes, "\n"), nil
 	}
 	if err := config.SaveNodes(nodes); err != nil {
 		return "", err
 	}
 
-	var names []string
 	currentChanged := false
 	cfg, _ := config.LoadWebUIConfig()
 	for _, id := range changed {
-		for _, n := range nodes {
-			if n.ID == id {
-				names = append(names, n.Name)
-			}
-		}
 		if cfg != nil && cfg.CurrentNodeID == id {
 			currentChanged = true
 		}
 	}
-	msg := fmt.Sprintf("已迁移到 VLESS+XHTTP：%s", strings.Join(names, "、"))
+	msg := strings.Join(append([]string{"已迁移到 VLESS+XHTTP：" + nodeNames(nodes, changed)}, notes...), "\n")
 	if currentChanged {
 		if err := RenderXrayConfig(nodes, cfg.CurrentNodeID); err != nil {
 			return msg, fmt.Errorf("当前节点已迁移，但渲染 Xray 配置失败: %w", err)
