@@ -2,16 +2,20 @@
 Description=RProxy IP Rule & Route Setup
 After=nftables.service network.target
 Requires=nftables.service
+# 与 nftables 同停同启：Requires 只会让本服务随 nftables 停止，
+# nftables 再次启动时并不会拉起本服务，导致策略路由丢失、TPROXY 流量到不了 Xray
+PartOf=nftables.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# 添加 fwmark 路由表
+# 添加 fwmark 路由表（先删旧规则、路由用 replace，保证 restart 时幂等）
+ExecStartPre=-/usr/sbin/ip rule del fwmark 1 table 100
 ExecStart=/usr/sbin/ip rule add fwmark 1 table 100
-ExecStart=/usr/sbin/ip route add local 0.0.0.0/0 dev lo table 100
-# 停止时清理
-ExecStop=/usr/sbin/ip rule del fwmark 1 table 100
-ExecStop=/usr/sbin/ip route flush table 100
+ExecStart=/usr/sbin/ip route replace local 0.0.0.0/0 dev lo table 100
+# 停止时清理（规则可能已不存在，忽略失败）
+ExecStop=-/usr/sbin/ip rule del fwmark 1 table 100
+ExecStop=-/usr/sbin/ip route flush table 100
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target nftables.service

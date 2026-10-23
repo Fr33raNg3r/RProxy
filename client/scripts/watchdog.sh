@@ -112,6 +112,13 @@ if [[ $webui_active -eq 0 ]]; then
     systemctl restart rproxy-gw-webui || true
 fi
 
+# 策略路由丢失时 TPROXY 流量到不了 Xray（局域网和本机都不走代理），
+# 而上面的代理探测走 socks 端口、不经过策略路由，发现不了这种情况，需单独检查
+if ! ip rule | grep -q 'fwmark 0x1 lookup 100' || ! ip route show table 100 | grep -q 'local default dev lo'; then
+    log_to_file "策略路由（fwmark 1 → table 100）缺失，尝试恢复"
+    systemctl restart rproxy-gw-iproute || true
+fi
+
 save_state
 
 # ---------- 写入 health.json ----------

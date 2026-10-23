@@ -2,14 +2,15 @@
 Description=RProxy mosdns DNS forwarder
 After=network.target nftables.service rproxy-gw-iproute.service
 Wants=network.target
+# 启动频率限制必须写在 [Unit]，写在 [Service] 会被 systemd 忽略
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
 ExecStart=/opt/rproxy-gw/bin/mosdns start -d /opt/rproxy-gw/config/mosdns -c config.yaml
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=5
-StartLimitIntervalSec=60
 # 提升性能
 LimitNOFILE=65535
 # mosdns 需要操作 nftables set，必须以 root 运行

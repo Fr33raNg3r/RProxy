@@ -820,6 +820,8 @@ action_upgrade() {
 
     # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）
     systemctl enable --now rproxy-gw-flush-ipsets.timer 2>/dev/null || true
+    # iproute 的 [Install] 新增了 WantedBy=nftables.service，需 reenable 才会建立对应链接（不影响运行状态）
+    systemctl reenable rproxy-gw-iproute.service 2>/dev/null || true
     # 只 enable，不 start —— 启动放到 nft -f 之后，避免 cn_ips 被 flush ruleset 抹掉
     systemctl enable rproxy-gw-load-cn-ips.service 2>/dev/null || true
     systemctl enable rproxy-gw-load-static-ips.service 2>/dev/null || true
