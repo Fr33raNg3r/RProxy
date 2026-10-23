@@ -341,16 +341,22 @@ func applyNodeDefaults(n *config.Node) {
 }
 
 // validateNode 校验节点必填字段
-// VMess+WS+TLS 必须用域名连接（不接受 IP，因为需要 TLS SNI）
+// 两种协议都走 TLS，必须用域名连接（不接受 IP，因为需要 TLS SNI）
 func validateNode(n *config.Node) error {
 	if strings.TrimSpace(n.Name) == "" {
 		return simpleErrMsg("name 不能为空")
+	}
+	// protocol 为空 = 旧节点（按 VMess + WS 处理，等待自动迁移）
+	switch n.Protocol {
+	case "", config.ProtocolVMessWS, config.ProtocolVLESSXHTTP:
+	default:
+		return simpleErrMsg("protocol 必须是 vless-xhttp / vmess-ws 之一")
 	}
 	if strings.TrimSpace(n.Address) == "" {
 		return simpleErrMsg("address 不能为空")
 	}
 	if isIPAddress(n.Address) {
-		return simpleErrMsg("address 必须是域名（VMess+WS+TLS 协议不能用 IP）")
+		return simpleErrMsg("address 必须是域名（TLS 需要 SNI，不能用 IP）")
 	}
 	if n.Port <= 0 || n.Port > 65535 {
 		return simpleErrMsg("port 无效")
@@ -364,14 +370,13 @@ func validateNode(n *config.Node) error {
 	if !strings.HasPrefix(n.WSPath, "/") {
 		return simpleErrMsg("ws_path 必须以 / 开头")
 	}
-	// 验证 security 字段
-	if n.Security != "" {
+	// 验证 security 字段（仅 VMess 使用；none / zero 已被 Xray v26.10.21 移除）
+	if n.Protocol != config.ProtocolVLESSXHTTP && n.Security != "" {
 		validSec := map[string]bool{
 			"auto": true, "aes-128-gcm": true, "chacha20-poly1305": true,
-			"none": true, "zero": true,
 		}
 		if !validSec[n.Security] {
-			return simpleErrMsg("security 必须是 auto / aes-128-gcm / chacha20-poly1305 / none / zero 之一")
+			return simpleErrMsg("security 必须是 auto / aes-128-gcm / chacha20-poly1305 之一")
 		}
 	}
 	return nil

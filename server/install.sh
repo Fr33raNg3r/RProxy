@@ -690,6 +690,8 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload
+    # nginx 模板也要更新：rproxy-server change-domain / regenerate 用的是这份副本
+    cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
 
     # 重新部署 LibreSpeed（PHP 版本可能变了）

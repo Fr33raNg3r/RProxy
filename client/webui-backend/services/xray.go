@@ -144,10 +144,67 @@ func buildXrayBaseConfig() map[string]interface{} {
 	}
 }
 
-// buildProxyOutbound: VMess + WebSocket + TLS
+// buildProxyOutbound 按节点协议生成 proxy 出站；protocol 为空的旧节点按 VMess + WS 处理
+func buildProxyOutbound(n *config.Node) map[string]interface{} {
+	if n.Protocol == config.ProtocolVLESSXHTTP {
+		return buildXHTTPOutbound(n)
+	}
+	return buildVMessWSOutbound(n)
+}
+
+// buildXHTTPOutbound: VLESS + XHTTP + TLS
+// 服务端架构：客户端 → TLS(h2)+VLESS+XHTTP → Nginx (TLS 终结, grpc_pass h2c) → Xray (VLESS XHTTP) → 出网
+func buildXHTTPOutbound(n *config.Node) map[string]interface{} {
+	host := n.Host
+	if host == "" {
+		host = n.Address
+	}
+	path := n.WSPath
+	if path == "" {
+		path = "/"
+	}
+	return map[string]interface{}{
+		"tag":      "proxy",
+		"protocol": "vless",
+		"settings": map[string]interface{}{
+			"vnext": []interface{}{
+				map[string]interface{}{
+					"address": resolveAddress(n.Address), // 同 VMess：预解析，避免依赖 mosdns
+					"port":    n.Port,
+					"users": []interface{}{
+						map[string]interface{}{
+							"id":         n.UUID,
+							"encryption": "none", // 加密交给外层 TLS
+						},
+					},
+				},
+			},
+		},
+		"streamSettings": map[string]interface{}{
+			"network":  "xhttp",
+			"security": "tls",
+			"xhttpSettings": map[string]interface{}{
+				"path": path,
+				"host": host,
+				"mode": "auto",
+			},
+			"tlsSettings": map[string]interface{}{
+				"serverName": host,
+				// nginx 开了 http2，XHTTP 在 h2 上复用连接
+				"alpn": []string{"h2"},
+			},
+			"sockopt": map[string]interface{}{
+				"mark":        255,
+				"tcpFastOpen": true,
+			},
+		},
+	}
+}
+
+// buildVMessWSOutbound: VMess + WebSocket + TLS
 // 服务端架构：客户端 → TLS+VMess+WS → Nginx (TLS 终结) → Xray (VMess WS) → 出网
 // 所以客户端的 streamSettings.security = "tls"，network = "ws"
-func buildProxyOutbound(n *config.Node) map[string]interface{} {
+func buildVMessWSOutbound(n *config.Node) map[string]interface{} {
 	host := n.Host
 	if host == "" {
 		host = n.Address // 默认与 address 相同

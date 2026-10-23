@@ -7,6 +7,8 @@
 #   {{WEB_ROOT}}   - 静态网站根目录（如 /var/www/rproxy-server）
 #   {{SSL_DIR}}    - 证书目录
 #   {{XRAY_PORT}}  - Xray 监听的本地端口（默认 9890）
+# XHTTP 的 9891 端口直接写死（须与 common.sh 的 XRAY_XHTTP_PORT 一致）：
+# 1.5.x 的 rproxy-server upgrade 会先用本机旧 install.sh 渲染新模板，新增占位符会无人替换导致 nginx -t 失败
 #   {{PHP_SOCK}}   - PHP-FPM socket 路径
 # ============================================================================
 
@@ -70,11 +72,22 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # 不传 X-Forwarded-For：新版 Xray 未配置 trustedXForwardedFor 时会忽略它，并对每个连接打警告
         # WS 长连接：禁掉读超时（默认 60s 会切断长连接）
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
         proxy_buffering off;
+    }
+
+    # ----- VLESS + XHTTP 反代到 Xray（h2c，写法同 Xray 官方示例）-----
+    # 与 WS 共用路径：WS 请求恰为 {{WS_PATH}}（上面的精确匹配），XHTTP 请求总以 {{WS_PATH}}/ 开头
+    # 不传 X-Forwarded-For：新版 Xray 未配置 trustedXForwardedFor 时会对每个连接打警告
+    location {{WS_PATH}}/ {
+        client_max_body_size 0;
+        client_body_timeout 5m;
+        grpc_read_timeout 315;
+        grpc_send_timeout 5m;
+        grpc_pass grpc://127.0.0.1:9891;
     }
 
     # ----- LibreSpeed 后端（PHP）-----

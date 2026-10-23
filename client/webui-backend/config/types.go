@@ -33,17 +33,24 @@ type WebUIConfig struct {
 	LanGateway string `json:"lan_gateway"`
 }
 
-// ----------------- 节点配置（VMess + WebSocket + TLS）-----------------
+// ----------------- 节点配置（VLESS + XHTTP + TLS / VMess + WebSocket + TLS）-----------------
+
+// 节点协议。空值 = 1.6.0 之前的旧节点：按 VMess + WS 渲染，并作为自动迁移到 XHTTP 的候选
+const (
+	ProtocolVMessWS    = "vmess-ws"
+	ProtocolVLESSXHTTP = "vless-xhttp"
+)
 
 type Node struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	Protocol string `json:"protocol"` // "" / vmess-ws / vless-xhttp，见上方常量
 	Address  string `json:"address"`  // 域名（必须是域名，不能是 IP）
 	Port     int    `json:"port"`     // 通常 443
-	UUID     string `json:"uuid"`     // VMess 用户 ID
-	AlterID  int    `json:"alter_id"` // 通常 0（启用 AEAD）
-	Security string `json:"security"` // VMess 加密：auto / aes-128-gcm / chacha20-poly1305 / none / zero
-	WSPath   string `json:"ws_path"`  // WebSocket 路径，如 /a1b2c3d4e5f60789
+	UUID     string `json:"uuid"`     // 用户 ID（VMess 与 VLESS 共用）
+	AlterID  int    `json:"alter_id"` // 仅 VMess：通常 0（启用 AEAD）
+	Security string `json:"security"` // 仅 VMess 加密：auto / aes-128-gcm / chacha20-poly1305
+	WSPath   string `json:"ws_path"`  // 路径，如 /a1b2c3d4e5f60789；WS 与 XHTTP 共用（服务端 nginx 按 =/path 与 /path/ 区分）
 	Host     string `json:"host"`     // SNI 和 HTTP Host，通常等于 Address
 	Enabled  bool   `json:"enabled"`
 	Order    int    `json:"order"`

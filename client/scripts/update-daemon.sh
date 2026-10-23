@@ -53,8 +53,9 @@ check_self_update() {
 
 # ---------- 2. 升级 Xray ----------
 # 升级前备份旧二进制；装新版后用新版校验现有配置能否加载，
-# 不兼容（如 VMess/WS 等弃用功能被移除）则回滚并以旧版重启，
-# 同时写告警标志 data/xray-update-alert.json 供 WebUI 展示。
+# 不兼容（如 VMess/WS 等弃用功能被移除）则回滚并以旧版重启；
+# 能加载但实际连不通（如 1.5.0 遇到的 ALPN 行为变化）同样回滚。
+# 两种情况都写告警标志 data/xray-update-alert.json 供 WebUI 展示。
 update_xray() {
     log_to_file "检查 Xray 版本（官方脚本自动判断）"
     local logf="${LOG_DIR}/$(date +%Y%m%d).log"
@@ -66,6 +67,10 @@ update_xray() {
         xray_bak=$(mktemp)
         cp -f "$xray_bin" "$xray_bak"
     fi
+    # 升级前的版本与连通性：只有"升级前通、升级后不通"才归咎于 Xray 升级
+    local old_ver pre_ok=0
+    old_ver=$("$xray_bin" version 2>/dev/null | head -n 1)
+    proxy_health_check 10808 && pre_ok=1
 
     # --without-logfiles：不让官方脚本把 /var/log/xray 改成 xray:xray 700（root 无 CAP_DAC_OVERRIDE 会打不开 log）
     if ! bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
@@ -77,25 +82,50 @@ update_xray() {
 
     # 官方脚本可能已用新版重启 xray；用新版二进制校验现有配置能否加载。
     if [[ -f "$xray_cfg" ]] && ! "$xray_bin" run -test -format=json -c "$xray_cfg" >>"$logf" 2>&1; then
-        log_to_file "新版 Xray 无法加载现有配置，回滚到旧版本"
-        if [[ -n "$xray_bak" ]]; then
-            cp -f "$xray_bak" "$xray_bin"
-            systemctl restart xray >>"$logf" 2>&1 || true
-            log_to_file "已回滚并以旧版本重启 Xray"
+        rollback_xray "$xray_bak" "新版 Xray 无法加载现有配置" \
+            "Xray 自动更新检测到新版本与当前配置不兼容（可能是被弃用的功能已被移除），已自动回滚到旧版本以保持服务可用。"
+    else
+        log_to_file "Xray 新版本配置校验通过"
+        local new_ver
+        new_ver=$("$xray_bin" version 2>/dev/null | head -n 1)
+        if [[ $pre_ok -eq 1 && "$new_ver" != "$old_ver" ]] && ! xray_health_after_upgrade; then
+            rollback_xray "$xray_bak" "新版 Xray 能加载配置但代理连不通" \
+                "Xray 自动更新后代理连不通（新版本能加载配置，但实际连接失败），已自动回滚到旧版本以保持服务可用。"
+        else
+            rm -f "$alert_file" 2>/dev/null || true
         fi
-        mkdir -p "${DATA_DIR}"
-        cat > "$alert_file" <<EOF
+    fi
+    [[ -n "$xray_bak" ]] && rm -f "$xray_bak"
+}
+
+# xray_health_after_upgrade 等新版 Xray 起来后检测代理，最多 3 次（官方脚本重启 Xray 需要几秒）
+xray_health_after_upgrade() {
+    local i
+    for i in 1 2 3; do
+        sleep 5
+        proxy_health_check 10808 && return 0
+    done
+    return 1
+}
+
+# rollback_xray <旧二进制备份> <日志原因> <WebUI 告警文案>
+rollback_xray() {
+    local bak="$1" reason="$2" message="$3"
+    local logf="${LOG_DIR}/$(date +%Y%m%d).log"
+    log_to_file "${reason}，回滚到旧版本"
+    if [[ -n "$bak" ]]; then
+        cp -f "$bak" /usr/local/bin/xray
+        systemctl restart xray >>"$logf" 2>&1 || true
+        log_to_file "已回滚并以旧版本重启 Xray"
+    fi
+    mkdir -p "${DATA_DIR}"
+    cat > "${DATA_DIR}/xray-update-alert.json" <<EOF
 {
   "active": true,
   "time": "$(date '+%Y-%m-%d %H:%M:%S')",
-  "message": "Xray 自动更新检测到新版本与当前配置不兼容（可能是 VMess / WebSocket 等被弃用功能已被移除），已自动回滚到旧版本以保持服务可用。建议尽快迁移协议（VMess→VLESS、WebSocket→XHTTP）后再升级。"
+  "message": "${message}"
 }
 EOF
-    else
-        log_to_file "Xray 新版本配置校验通过"
-        rm -f "$alert_file" 2>/dev/null || true
-    fi
-    [[ -n "$xray_bak" ]] && rm -f "$xray_bak"
 }
 
 # ---------- 3. 更新 GeoIP / GeoSite ----------
@@ -152,6 +182,10 @@ fi
 
 update_xray
 update_geo_data
+# 服务端可能比客户端晚升级到支持 XHTTP 的版本，每天再试一次自动迁移旧节点
+log_to_file "检查节点能否自动迁移到 VLESS + XHTTP"
+"${BIN_DIR}/webui" migrate-xhttp >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1 \
+    || log_to_file "XHTTP 迁移检查失败（不影响现有连接）"
 prune_logs
 
 log_to_file "================ 更新完成 ================"

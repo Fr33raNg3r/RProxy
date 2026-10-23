@@ -61,6 +61,34 @@ _render_xray() {
         "destOverride": ["http", "tls", "quic"],
         "routeOnly": true
       }
+    },
+    {
+      "tag": "vless-xhttp",
+      "listen": "127.0.0.1",
+      "port": ${XRAY_XHTTP_PORT},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}",
+            "email": "default@local"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "none",
+        "xhttpSettings": {
+          "path": "${ws_path}",
+          "mode": "auto"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "routeOnly": true
+      }
     }
   ],
   "outbounds": [
@@ -160,15 +188,16 @@ cmd_show() {
     echo "  把以下字段填到 RProxy 客户端 WebUI 的【节点管理】→【+ 添加节点】："
     echo ""
     printf "    %-20s %s\n"             "名称（自定义）："    "如：MyVPS"
+    printf "    %-20s ${CYAN}%s${NC}\n" "协议："           "VLESS + XHTTP + TLS（推荐）"
     printf "    %-20s ${CYAN}%s${NC}\n" "地址 (address)：" "${domain}"
     printf "    %-20s ${CYAN}%s${NC}\n" "端口 (port)："    "443"
     printf "    %-20s ${CYAN}%s${NC}\n" "UUID："           "${uuid}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "路径："           "${ws_path}"
+    printf "    %-20s ${CYAN}%s${NC}\n" "SNI / Host："     "${domain}"
+    echo ""
+    echo "  仍兼容旧客户端的 VMess + WS + TLS（同一 UUID 与路径）："
     printf "    %-20s ${CYAN}%s${NC}\n" "AlterID："        "${alter_id}"
     printf "    %-20s ${CYAN}%s${NC}\n" "加密方式："       "${security}"
-    printf "    %-20s ${CYAN}%s${NC}\n" "传输协议："       "ws (WebSocket)"
-    printf "    %-20s ${CYAN}%s${NC}\n" "WS 路径："        "${ws_path}"
-    printf "    %-20s ${CYAN}%s${NC}\n" "TLS 安全："       "tls"
-    printf "    %-20s ${CYAN}%s${NC}\n" "SNI / Host："     "${domain}"
     echo ""
     echo -e "  ${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
@@ -238,6 +267,12 @@ deploy_final_nginx_inplace() {
     if [[ ! -f "$tpl" ]]; then
         log_warn "找不到 nginx 模板，仅替换 server_name"
         return
+    fi
+    # 1.5.x 的 rproxy-server upgrade 用旧 install.sh 升级时不会更新这份模板；
+    # 用旧模板渲染会丢掉 XHTTP 反代，导致已迁移的客户端全部断开
+    if ! grep -q 'grpc_pass' "$tpl"; then
+        log_error "nginx 模板是旧版（不含 XHTTP），请先再执行一次 rproxy-server upgrade 后重试"
+        return 1
     fi
 
     local php_sock

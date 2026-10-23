@@ -850,6 +850,10 @@ action_upgrade() {
     restart_service xray
     restart_service rproxy-gw-webui
 
+    # 旧节点（protocol 为空）探测服务端是否已支持 XHTTP，能连通的自动迁移；不通的保持原样，每日更新时再试
+    log_step "检查节点能否自动迁移到 VLESS + XHTTP"
+    "${BIN_DIR}/webui" migrate-xhttp || log_warn "XHTTP 迁移检查失败，不影响现有连接，每日更新时会再试"
+
     # 清理旧版升级遗留的 Go/Node 工具链
     remove_legacy_build_toolchain
     prune_backups 5
