@@ -729,8 +729,12 @@ action_upgrade() {
     log_done "快照：${UPGRADE_SNAPSHOT}"
     trap upgrade_exit_trap EXIT
 
-    # 升级 Xray
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+    # 升级 Xray：每日自动升级且已执行 rproxy-server xray-autoupdate off 时跳过；手动升级不受影响
+    if [[ "${RPROXY_AUTO_UPGRADE:-}" == "1" && -f /var/lib/rproxy-server/no-xray-auto-update ]]; then
+        log_info "Xray 自动更新已关闭，本次自动升级跳过 Xray"
+    else
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+    fi
 
     # 部署新脚本（保留配置）
     cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"

@@ -43,7 +43,8 @@ check_self_update() {
         tmp_install=$(mktemp)
         if curl -fsSL --max-time 60 "${RAW_URL}/install.sh" -o "$tmp_install"; then
             chmod +x "$tmp_install"
-            if bash "$tmp_install" upgrade >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1; then
+            # RPROXY_AUTO_UPGRADE=1：告知 install.sh 本次是自动升级，需遵守 Xray 自动更新开关
+            if RPROXY_AUTO_UPGRADE=1 bash "$tmp_install" upgrade >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1; then
                 log_to_file "自我升级完成"
             else
                 log_to_file "自我升级失败（升级流程会自动回滚到升级前快照，详见上方日志）"
@@ -66,6 +67,11 @@ check_self_update() {
 # 任一情况都整体回滚到快照，并记录问题版本，之后跳过它直到上游发布新版本。
 # 服务端无 WebUI，结果记入日志，同时留存 data/xray-update-alert.json 便于排查。
 update_xray() {
+    # rproxy-server xray-autoupdate off 关闭了 Xray 自动更新（手动升级不受影响）
+    if [[ -f /var/lib/rproxy-server/no-xray-auto-update ]]; then
+        log_to_file "Xray 自动更新已关闭，跳过"
+        return
+    fi
     log_to_file "检查 Xray 版本"
     local logf="${LOG_DIR}/$(date +%Y%m%d).log"
     local xray_bin="/usr/local/bin/xray"

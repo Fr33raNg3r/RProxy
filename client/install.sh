@@ -846,7 +846,12 @@ action_upgrade() {
     fi
 
     # 4) Xray：官方脚本自带版本检查（看到新版才下载）
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles || true
+    # 每日自动升级且 WebUI 关闭了 Xray 自动更新时跳过；手动升级不受影响
+    if [[ "${RPROXY_AUTO_UPGRADE:-}" == "1" && -f /var/lib/rproxy-gw/no-xray-auto-update ]]; then
+        log_info "Xray 自动更新已关闭，本次自动升级跳过 Xray"
+    else
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles || true
+    fi
     ensure_xray_log_dir
     # 重写 Xray override.conf（关键：修复 NoNewPrivileges 等配置）
     # 即使 Xray 没升级，老版本的 override.conf 可能用了错误的空值语法导致 TPROXY 失效

@@ -12,6 +12,9 @@ require_installed() {
     is_installed || die "RProxy 服务端 未安装"
 }
 
+# 存在即关闭 Xray 自动更新（update-daemon.sh 读取），手动升级不受影响
+NO_XRAY_AUTO_UPDATE_FILE="/var/lib/rproxy-server/no-xray-auto-update"
+
 # ============================================================================
 # 内部：渲染 Xray 配置
 # ============================================================================
@@ -130,6 +133,11 @@ cmd_status() {
         local next_run
         next_run=$(systemctl list-timers rproxy-server-update.timer --no-pager 2>/dev/null | awk 'NR==2 {print $1, $2}')
         echo -e "  下次自动更新：   ${next_run:-未知}"
+    fi
+    if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+        echo -e "  Xray 自动更新：  ${YELLOW}已关闭${NC}"
+    else
+        echo -e "  Xray 自动更新：  已开启"
     fi
     echo ""
 }
@@ -376,6 +384,35 @@ cmd_upgrade() {
         || bash <(curl -fsSL "${RAW_URL}/install.sh") upgrade
 }
 
+# xray-autoupdate [on|off]：开关 Xray 自动更新，不带参数显示当前状态
+cmd_xray_autoupdate() {
+    require_installed
+    case "${1:-}" in
+        on)
+            require_root
+            rm -f "$NO_XRAY_AUTO_UPDATE_FILE"
+            log_info "Xray 自动更新已开启"
+            ;;
+        off)
+            require_root
+            mkdir -p "$(dirname "$NO_XRAY_AUTO_UPDATE_FILE")"
+            touch "$NO_XRAY_AUTO_UPDATE_FILE"
+            log_info "Xray 自动更新已关闭（RProxy 自身升级、证书续期不受影响；手动 upgrade 仍会升级 Xray）"
+            ;;
+        "")
+            if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+                echo "Xray 自动更新：已关闭"
+            else
+                echo "Xray 自动更新：已开启"
+            fi
+            ;;
+        *)
+            echo "用法：rproxy-server xray-autoupdate [on|off]"
+            exit 1
+            ;;
+    esac
+}
+
 cmd_uninstall() {
     require_root
     if [[ -f /opt/rproxy-server/install.sh ]]; then
@@ -407,6 +444,7 @@ cmd_help() {
     fw del <port> [tcp|udp]         撤销放行
     logs [xray|nginx|update] [行数] 查看日志，默认 xray 100 行
     upgrade                         手动升级
+    xray-autoupdate [on|off]        开关 Xray 自动更新，不带参数查看状态
     optimize                        系统优化（内核切换、网络调优）
     uninstall                       卸载
     help                            显示此帮助
@@ -464,6 +502,11 @@ show_menu() {
         echo "    8) 升级"
         echo "    9) 系统优化（内核、网络调优）"
         echo "   10) 卸载"
+        if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+            echo -e "   11) Xray 自动更新开关（当前：${YELLOW}已关闭${NC}）"
+        else
+            echo "   11) Xray 自动更新开关（当前：已开启）"
+        fi
         echo "    0) 退出"
         echo ""
         local choice
@@ -480,6 +523,7 @@ show_menu() {
             8) cmd_upgrade; press_enter ;;
             9) cmd_optimize ;;
             10) cmd_uninstall; exit 0 ;;
+            11) menu_xray_autoupdate; press_enter ;;
             0) exit 0 ;;
             *) log_error "无效选项"; sleep 1 ;;
         esac
@@ -490,6 +534,15 @@ press_enter() {
     echo ""
     local _
     _=$(ask "    按 Enter 继续...")
+}
+
+# 菜单：切换 Xray 自动更新（当前开启则关闭，反之亦然）
+menu_xray_autoupdate() {
+    if [[ -f "$NO_XRAY_AUTO_UPDATE_FILE" ]]; then
+        cmd_xray_autoupdate on
+    else
+        cmd_xray_autoupdate off
+    fi
 }
 
 menu_change_domain() {
@@ -548,6 +601,7 @@ main() {
         fw)             shift; cmd_fw "$@" ;;
         logs)           shift; cmd_logs "$@" ;;
         upgrade)        cmd_upgrade ;;
+        xray-autoupdate) shift; cmd_xray_autoupdate "$@" ;;
         optimize)       cmd_optimize ;;
         uninstall)      cmd_uninstall ;;
         help|-h|--help) cmd_help ;;

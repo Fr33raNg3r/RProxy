@@ -23,6 +23,11 @@
               <span>分</span>
             </div>
           </n-form-item>
+
+          <n-form-item label="Xray 自动更新" style="margin-top: 12px;">
+            <n-switch :value="xrayAutoUpdate" :loading="savingXray" @update:value="toggleXrayAutoUpdate" />
+          </n-form-item>
+          <div class="text-muted text-xs" style="margin: -4px 0 12px;">切换即时生效，无需点保存。关闭后每日自动更新不再升级 Xray（RProxy、Geo 数据仍照常更新），手动升级不受影响</div>
         </n-form>
         <n-button type="primary" :loading="saving" style="margin-top: 4px;" @click="saveSettings"><template #icon><SvgIcon name="save" /></template>保存设置</n-button>
 
@@ -104,6 +109,9 @@ const settings = ref({
   update_hour: 4,
   update_minute: 0
 })
+// Xray 自动更新开关单独维护，切换即提交，不随「保存设置」提交
+const xrayAutoUpdate = ref(true)
+const savingXray = ref(false)
 const lan = ref({
   lan_iface: '',
   lan_ip_cidr: '',
@@ -172,6 +180,7 @@ async function load() {
       update_hour: data.update_hour,
       update_minute: data.update_minute
     }
+    xrayAutoUpdate.value = data.xray_auto_update !== false
     lan.value = {
       lan_iface: data.lan_iface || '',
       lan_ip_cidr: data.lan_ip_cidr || '',
@@ -209,6 +218,22 @@ function saveLan() {
       }
     }
   })
+}
+
+async function toggleXrayAutoUpdate(val) {
+  savingXray.value = true
+  error.value = ''
+  try {
+    await api.updateSettings({ xray_auto_update: val })
+    xrayAutoUpdate.value = val
+    success.value = val ? 'Xray 自动更新已开启' : 'Xray 自动更新已关闭'
+    setTimeout(() => success.value = '', 5000)
+  } catch (e) {
+    // 提交失败则开关保持原状态
+    error.value = '切换 Xray 自动更新失败：' + e.message
+  } finally {
+    savingXray.value = false
+  }
 }
 
 async function saveSettings() {

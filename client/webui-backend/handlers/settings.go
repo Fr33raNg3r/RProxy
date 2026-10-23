@@ -3,12 +3,38 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
 )
+
+// noXrayAutoUpdatePath 存在即关闭 Xray 自动更新（update-daemon.sh 读取），
+// 仅影响每日自动更新，手动升级不受影响。测试中可替换。
+var noXrayAutoUpdatePath = "/var/lib/rproxy-gw/no-xray-auto-update"
+
+// xrayAutoUpdateEnabled 标记文件不存在即为开启
+func xrayAutoUpdateEnabled() bool {
+	_, err := os.Stat(noXrayAutoUpdatePath)
+	return os.IsNotExist(err)
+}
+
+// setXrayAutoUpdate 开启时删除标记文件，关闭时创建
+func setXrayAutoUpdate(enabled bool) error {
+	if enabled {
+		if err := os.Remove(noXrayAutoUpdatePath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(noXrayAutoUpdatePath), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(noXrayAutoUpdatePath, nil, 0644)
+}
 
 // GetSettings GET /api/settings
 func GetSettings(w http.ResponseWriter, r *http.Request) {
@@ -30,31 +56,33 @@ func GetSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"listen_port":     cfg.ListenPort,
-		"username":        cfg.Username,
-		"wg_enabled":      cfg.WGEnabled,
-		"wg_listen_port":  cfg.WGListenPort,
-		"wg_subnet":       cfg.WGSubnet,
-		"wg_endpoint":     cfg.WGEndpoint,
-		"update_hour":     cfg.UpdateHour,
-		"update_minute":   cfg.UpdateMinute,
-		"current_node_id": cfg.CurrentNodeID,
-		"lan_iface":       lanIface,
-		"lan_ip_cidr":     lanCIDR,
-		"lan_gateway":     lanGW,
+		"listen_port":      cfg.ListenPort,
+		"username":         cfg.Username,
+		"wg_enabled":       cfg.WGEnabled,
+		"wg_listen_port":   cfg.WGListenPort,
+		"wg_subnet":        cfg.WGSubnet,
+		"wg_endpoint":      cfg.WGEndpoint,
+		"update_hour":      cfg.UpdateHour,
+		"update_minute":    cfg.UpdateMinute,
+		"xray_auto_update": xrayAutoUpdateEnabled(),
+		"current_node_id":  cfg.CurrentNodeID,
+		"lan_iface":        lanIface,
+		"lan_ip_cidr":      lanCIDR,
+		"lan_gateway":      lanGW,
 	})
 }
 
 // UpdateSettings PUT /api/settings
 func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ListenPort   *int    `json:"listen_port"`
-		WGListenPort *int    `json:"wg_listen_port"`
-		UpdateHour   *int    `json:"update_hour"`
-		UpdateMinute *int    `json:"update_minute"`
-		LanIface     *string `json:"lan_iface"`
-		LanIPCIDR    *string `json:"lan_ip_cidr"`
-		LanGateway   *string `json:"lan_gateway"`
+		ListenPort     *int    `json:"listen_port"`
+		WGListenPort   *int    `json:"wg_listen_port"`
+		UpdateHour     *int    `json:"update_hour"`
+		UpdateMinute   *int    `json:"update_minute"`
+		XrayAutoUpdate *bool   `json:"xray_auto_update"`
+		LanIface       *string `json:"lan_iface"`
+		LanIPCIDR      *string `json:"lan_ip_cidr"`
+		LanGateway     *string `json:"lan_gateway"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorMsg("请求体格式错误"))
@@ -165,6 +193,13 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// WG 响应包会被 TPROXY 劫持 → 远端客户端永远握手不上。
 		if err := services.SyncWGPortToNftables(cfg.WGListenPort); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("同步 nftables WG 端口失败: "+err.Error()))
+			return
+		}
+	}
+
+	if req.XrayAutoUpdate != nil {
+		if err := setXrayAutoUpdate(*req.XrayAutoUpdate); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 Xray 自动更新开关失败: "+err.Error()))
 			return
 		}
 	}
