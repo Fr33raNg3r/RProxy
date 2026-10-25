@@ -17,6 +17,10 @@
 
 source /opt/rproxy-gw/scripts/common.sh
 
+# 本单元设了 LogLevelMax=notice（滤掉 systemd 每轮的启动 / 完成记录）：脚本自己的日志以 notice 级别写入 journal，
+# 否则同样被滤掉，WebUI 日志页「健康检查」就看不到内容
+LOG_STDOUT_PREFIX="<5>"
+
 # 每轮都写的运行时状态放 /run（内存文件系统）：不磨损闪存，重启后从头开始也没有影响
 RUN_DIR="/run/rproxy-gw"
 HEALTH_FILE="${RUN_DIR}/health.json"
@@ -214,7 +218,7 @@ if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
             proxy_ok=1
             restart_count=0
             # 自动故障转移后，排在前面的节点恢复了就切回去（是否需要检查、探测、切换都在 failback-check 里判断）
-            "${BIN_DIR}/webui" failback-check 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" || true
+            "${BIN_DIR}/webui" failback-check 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" | sed 's/^/<5>/' || true
         else
             proxy_ok=0
             if [[ $restart_count -lt 1 ]]; then
@@ -228,7 +232,7 @@ if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
             else
                 # 第二次：切换节点
                 log_to_file "重启 Xray 后代理仍不通，切换到下一个节点"
-                "${BIN_DIR}/webui" switch-next-node 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log"
+                "${BIN_DIR}/webui" switch-next-node 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" | sed 's/^/<5>/'
                 last_action="switch_node"
                 restart_count=0
             fi

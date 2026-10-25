@@ -6,4 +6,8 @@ After=rproxy-gw-webui.service
 Type=oneshot
 # 一轮最长约 3 分钟（等探测时间 + 3 次探测 + 切换节点）；超时兜底，避免卡住后不再触发
 TimeoutStartSec=10min
+# 只把 notice 及以上写进 journal：滤掉 systemd 每轮记的"启动 / 完成 / 停用 / 资源用量"（均为 info 及以下，
+# systemd 257 的 LogLevelMax 同样作用于 PID 1 关于本单元的日志），一天约 4000 行；运行失败（warning）仍会记录。
+# 脚本自己的故障日志以 <5>（notice）前缀输出，见 watchdog.sh 的 LOG_STDOUT_PREFIX
+LogLevelMax=notice
 ExecStart=/opt/rproxy-gw/scripts/watchdog.sh

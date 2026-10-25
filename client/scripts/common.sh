@@ -47,7 +47,8 @@ log_to_file() {
     line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
     mkdir -p "${LOG_DIR}"
     echo "$line" >> "${logfile}"
-    echo "$line"
+    # LOG_STDOUT_PREFIX 可设为 <5> 等 syslog 级别前缀（journald 存储时去掉），供设了 LogLevelMax 的单元使用
+    echo "${LOG_STDOUT_PREFIX:-}$line"
 }
 
 # 紧急停止标记：放在 /run（tmpfs），重启机器自动清除，开机后恢复正常模式
