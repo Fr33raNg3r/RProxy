@@ -64,6 +64,8 @@ type HealthData struct {
 	FailCount     int    `json:"fail_count"`
 	RestartCount  int    `json:"restart_count"`
 	LastAction    string `json:"last_action"`
+	// LastProbe 最近一次代理探测的时间（last_check 每轮都更新，但不是每轮都探测）
+	LastProbe string `json:"last_probe"`
 }
 
 func ReadHealth() (*HealthData, error) {

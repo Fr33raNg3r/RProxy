@@ -285,7 +285,13 @@ const services = computed(() => ([
 ]))
 
 function formatAction(a) {
-  return { restart_xray: '重启 Xray', switch_node: '切换节点' }[a] || a
+  return {
+    restart_xray: '重启 Xray',
+    switch_node: '切换节点',
+    restart_mosdns: '重启 mosdns',
+    reload_nftables: '重新加载规则',
+    emergency_stop: '紧急停止中',
+  }[a] || a
 }
 
 async function restart(name) {
@@ -408,8 +414,13 @@ async function saveNode() {
   const payload = { ...form.value, protocol: 'vless-xhttp' }
   try {
     if (editingId.value) {
-      await api.updateNode(editingId.value, payload)
-      success.value = '节点已更新'
+      const r = await api.updateNode(editingId.value, payload)
+      // 编辑的是当前节点时后端会重启 Xray 并立即探测一次，返回 proxy_ok
+      if (r.proxy_ok === false) {
+        error.value = '节点已更新，但代理探测不通，请检查节点参数'
+      } else {
+        success.value = r.proxy_ok ? '节点已更新，代理连通' : '节点已更新'
+      }
     } else {
       await api.createNode(payload)
       success.value = '节点已添加'
@@ -425,9 +436,17 @@ async function saveNode() {
 }
 
 async function switchTo(n) {
+  error.value = ''
+  success.value = `正在切换到节点 ${n.name} 并检测连通性…`
   try {
-    await api.switchNode(n.id)
-    success.value = `已切换到节点 ${n.name}`
+    // 切换过程里后端会立即探测一次（约 2～8 秒），不通也保持在新节点
+    const r = await api.switchNode(n.id)
+    if (r.proxy_ok) {
+      success.value = `已切换到节点 ${n.name}，代理连通`
+    } else {
+      success.value = ''
+      error.value = `已切换到节点 ${n.name}，但代理探测不通`
+    }
     await loadNodes()
     setTimeout(() => { success.value = '' }, 3000)
   } catch (e) {

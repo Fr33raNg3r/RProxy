@@ -45,10 +45,34 @@ func buildStatusResponse() map[string]interface{} {
 		"node_count":        len(nodes),
 	}
 
-	if health != nil {
-		resp["health"] = health
+	if h := mergeManualProbe(health, currentNode, services.LastManualProbe()); h != nil {
+		resp["health"] = h
 	}
 	return resp
+}
+
+// mergeManualProbe WebUI 手动切换 / 编辑节点后立即探测过、结果比 watchdog 最近一次探测新、且针对当前节点时，
+// 用它作为代理连通性；watchdog 之后再探测（last_probe 更新）就自然换回 watchdog 的结果。
+// 两边各写各的，WebUI 不改 health.json，不会被 watchdog 每轮重写覆盖
+func mergeManualProbe(h *services.HealthData, currentNodeID string, m services.ProbeResult) *services.HealthData {
+	if m.Time.IsZero() || m.NodeID != currentNodeID {
+		return h
+	}
+	if h == nil {
+		h = &services.HealthData{CurrentNodeID: currentNodeID}
+	} else {
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", h.LastProbe, time.Local); err == nil && !t.Before(m.Time) {
+			return h
+		}
+		c := *h // 副本：不改 ReadHealth 返回的数据
+		h = &c
+	}
+	h.ProxyOK = 0
+	if m.OK {
+		h.ProxyOK = 1
+	}
+	h.LastProbe = m.Time.Format("2006-01-02 15:04:05")
+	return h
 }
 
 // StreamStatus 通过 SSE 每 3 秒推送一次状态

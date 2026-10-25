@@ -45,6 +45,7 @@ PROBE_URLS=(
 # ---------- 状态文件 ----------
 # restart_count：确认故障后是否已重启过 Xray（下一次确认故障就切换节点）
 # next_probe_at：下一次代理探测的时间（epoch 秒）；proxy_ok / fail_count：最近一次探测的结果
+# last_probe：最近一次探测的时间（写进 health.json，WebUI 据此判断它手动切换后的探测结果是否更新）
 # last_cn_check：上次检查 cn_ips 的时间
 load_state() {
     if [[ -f "$STATE_FILE" ]]; then
@@ -56,6 +57,7 @@ load_state() {
     : "${proxy_ok:=0}"
     : "${fail_count:=0}"
     : "${last_cn_check:=0}"
+    : "${last_probe:=}"
 }
 
 save_state() {
@@ -65,6 +67,7 @@ next_probe_at=${next_probe_at}
 proxy_ok=${proxy_ok}
 fail_count=${fail_count}
 last_cn_check=${last_cn_check}
+last_probe="${last_probe}"
 EOF
     mv -f "${STATE_FILE}.tmp" "$STATE_FILE"
 }
@@ -237,6 +240,7 @@ if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
                 restart_count=0
             fi
         fi
+        last_probe=$(date '+%Y-%m-%d %H:%M:%S')
         next_probe_at=$(( $(date +%s) + $(next_probe_delay) ))
     fi
 else
@@ -259,7 +263,8 @@ cat > "${HEALTH_FILE}.tmp" <<EOF
   "current_node_id": "${current_node}",
   "fail_count": ${fail_count},
   "restart_count": ${restart_count},
-  "last_action": "${last_action}"
+  "last_action": "${last_action}",
+  "last_probe": "${last_probe}"
 }
 EOF
 mv -f "${HEALTH_FILE}.tmp" "$HEALTH_FILE"

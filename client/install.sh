@@ -470,14 +470,9 @@ deploy_scripts_and_configs() {
              "${CONFIG_DIR}/xray" "${CONFIG_DIR}/mosdns" \
              "${CONFIG_DIR}/wireguard" "${CONFIG_DIR}/dns"
 
-    # 部署 shell 脚本
-    cp "${BUILD_DIR}/scripts/common.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/update-daemon.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/watchdog.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/emergency-stop.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/system-optimize.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/load-cn-ips.sh" "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/load-static-ips.sh" "${SCRIPTS_DIR}/"
+    # 部署 shell 脚本：与升级一样复制全部 *.sh（逐个列出曾漏掉 emergency-resume.sh，
+    # 新装的机器在第一次升级前 WebUI「紧急恢复」会失败）
+    cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
     # 本机快照与离线回滚工具（升级时会先用它打快照）
     install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" /usr/local/sbin/rproxy-rollback
     # install.sh 本身也部署到 INSTALL_DIR（升级时需要重新运行）

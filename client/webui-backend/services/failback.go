@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
@@ -140,6 +141,35 @@ var probeTargets = []string{
 // 5xx 与无响应（000）算失败。这些站点大陆都无法直连，不会把没走代理误判为正常
 func probeCodeOK(code string) bool {
 	return len(code) == 3 && code[0] >= '2' && code[0] <= '4'
+}
+
+// ProbeResult 一次由 WebUI 发起的代理探测（手动切换 / 编辑当前节点后立即测一次）
+type ProbeResult struct {
+	NodeID string
+	OK     bool
+	Time   time.Time
+}
+
+var (
+	manualProbeMu sync.Mutex
+	manualProbe   ProbeResult
+)
+
+// ProbeCurrentNode 经主 Xray（SOCKS 10808）立即探测一次并记下结果：watchdog 的探测间隔较长（白天 200～300 秒），
+// 手动切换后不立即测，状态页要等好几分钟才更新连通性
+func ProbeCurrentNode(nodeID string) bool {
+	ok := probeViaSocks(config.XraySocksPort)
+	manualProbeMu.Lock()
+	manualProbe = ProbeResult{NodeID: nodeID, OK: ok, Time: time.Now()}
+	manualProbeMu.Unlock()
+	return ok
+}
+
+// LastManualProbe 最近一次由 WebUI 发起的探测（没有过则为零值）
+func LastManualProbe() ProbeResult {
+	manualProbeMu.Lock()
+	defer manualProbeMu.Unlock()
+	return manualProbe
 }
 
 // probeViaSocks 经指定 SOCKS 端口访问一个随机挑选的探测地址

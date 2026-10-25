@@ -405,9 +405,8 @@ deploy_files() {
     log_step "部署脚本和配置文件"
     mkdir -p "${INSTALL_DIR}" "${SCRIPTS_DIR}" "${CONFIG_DIR}" "${DATA_DIR}" "${LOG_DIR}"
 
-    cp "${BUILD_DIR}/scripts/common.sh"            "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/update-daemon.sh"     "${SCRIPTS_DIR}/"
-    cp "${BUILD_DIR}/scripts/system-optimize.sh"   "${SCRIPTS_DIR}/"
+    # 与升级一样复制全部 *.sh（逐个列出曾漏掉 watchdog.sh，新装的服务器看门狗每分钟启动失败）
+    cp "${BUILD_DIR}/scripts/"*.sh "${SCRIPTS_DIR}/"
     # install.sh 本身也部署
     cp "${BUILD_DIR}/install.sh" "${INSTALL_DIR}/install.sh"
     chmod +x "${SCRIPTS_DIR}"/*.sh "${INSTALL_DIR}/install.sh"

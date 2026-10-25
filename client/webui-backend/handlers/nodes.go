@@ -154,6 +154,9 @@ func UpdateNode(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
 			return
 		}
+		// 编辑的是当前节点：立即探测一次，状态页不用等 watchdog 的下一次探测
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "proxy_ok": services.ProbeCurrentNode(id)})
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
@@ -260,7 +263,8 @@ func SwitchNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "current_node_id": id})
+	// 切换过程里立即探测一次（约 2～8 秒），结果随响应返回并同步到状态页；不通也保持在新节点
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "current_node_id": id, "proxy_ok": services.ProbeCurrentNode(id)})
 }
 
 // TestNode POST /api/nodes/{id}/test
