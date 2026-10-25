@@ -287,6 +287,22 @@ func TestNode(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetCertAlerts GET /api/nodes/cert-alerts
+// 证书剩余不足有效期 1/5 的节点（最近一次检查的结果，每 12 小时检查一次）
+func GetCertAlerts(w http.ResponseWriter, r *http.Request) {
+	alerts := services.GetCertAlerts()
+	out := make([]map[string]interface{}, 0, len(alerts))
+	for _, a := range alerts {
+		out = append(out, map[string]interface{}{
+			"node_id":   a.NodeID,
+			"node_name": a.NodeName,
+			"days_left": a.DaysLeft,
+			"message":   a.Message(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": out})
+}
+
 // ReorderNodes POST /api/nodes/reorder
 // body: { "ids": ["id1","id2",...] }
 func ReorderNodes(w http.ResponseWriter, r *http.Request) {

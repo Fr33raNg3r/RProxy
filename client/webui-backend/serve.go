@@ -34,6 +34,9 @@ func runServe() {
 	// 启动 DDNS 后台循环（配置未启用时每轮直接返回）
 	services.StartDDNS()
 
+	// 节点证书到期检查（每 12 小时）
+	services.StartCertCheck()
+
 	r := chi.NewRouter()
 
 	// 简单的请求日志
@@ -58,6 +61,7 @@ func runServe() {
 		r.Post("/api/nodes/{id}/switch", handlers.SwitchNode)
 		r.Post("/api/nodes/{id}/test", handlers.TestNode)
 		r.Post("/api/nodes/reorder", handlers.ReorderNodes)
+		r.Get("/api/nodes/cert-alerts", handlers.GetCertAlerts)
 
 		// WireGuard
 		r.Get("/api/wireguard/peers", handlers.ListPeers)

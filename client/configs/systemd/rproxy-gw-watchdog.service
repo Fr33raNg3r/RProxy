@@ -4,4 +4,6 @@ After=rproxy-gw-webui.service
 
 [Service]
 Type=oneshot
+# 一轮最长约 3 分钟（等探测时间 + 3 次探测 + 切换节点）；超时兜底，避免卡住后不再触发
+TimeoutStartSec=10min
 ExecStart=/opt/rproxy-gw/scripts/watchdog.sh

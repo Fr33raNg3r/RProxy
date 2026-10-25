@@ -603,6 +603,8 @@ start_services() {
 enable_auto_update() {
     log_step "启用每日自动更新（脚本+Xray+证书续期）"
     systemctl enable --now rproxy-server-update.timer
+    # Xray 看门狗：Xray 停止或连续不响应时重启（1.8.5）
+    systemctl enable --now rproxy-server-watchdog.timer
     log_done "自动更新已启用（每日 04:05 检查）"
 }
 
@@ -731,6 +733,8 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload
+    # 1.8.5 新增的 Xray 看门狗（已启用时无操作）
+    systemctl enable --now rproxy-server-watchdog.timer 2>/dev/null || true
     # 1.8.3 及更早 change-domain 不撤销旧域名的续期，旧证书续期时会覆盖当前证书：用新版 rproxy-server 清理
     /usr/local/bin/rproxy-server _acme-cleanup || log_warn "清理旧域名证书续期失败（不影响升级），可稍后执行 rproxy-server _acme-cleanup"
     # nginx 模板也要更新：rproxy-server change-domain / regenerate 用的是这份副本
@@ -777,7 +781,8 @@ action_uninstall() {
 
 do_uninstall_silent() {
     log_step "停止并禁用服务"
-    for svc in rproxy-server-update.timer rproxy-server-update.service xray; do
+    for svc in rproxy-server-update.timer rproxy-server-update.service \
+               rproxy-server-watchdog.timer rproxy-server-watchdog.service xray; do
         systemctl disable --now "$svc" 2>/dev/null || true
     done
 

@@ -1,0 +1,8 @@
+[Unit]
+Description=RProxy Server Xray Watchdog
+After=xray.service nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rproxy-server/scripts/watchdog.sh
+TimeoutStartSec=5min

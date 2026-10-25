@@ -814,6 +814,8 @@ action_upgrade() {
     fi
     # 清理旧版升级遗留下来的 .webui-hash（无害但无用）
     rm -f "${INSTALL_DIR}/.webui-hash"
+    # 1.8.5 起 watchdog 的运行时状态改放 /run/rproxy-gw，旧位置的文件不再更新
+    rm -f "${DATA_DIR}/health.json" "${DATA_DIR}/watchdog.state"
 
     # 2) mosdns：已存在二进制就跳过下载（首次升级或文件丢失才下）
     if [[ -x "${BIN_DIR}/mosdns" ]]; then

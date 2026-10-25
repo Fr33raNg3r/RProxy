@@ -155,3 +155,29 @@ func TestFailbackStillValid(t *testing.T) {
 		}
 	}
 }
+
+// 回切探测与 watchdog 一样从这几个常用站点里随机挑，访问目标不固定
+func TestProbeTargets(t *testing.T) {
+	want := map[string]bool{"www.google.com": true, "www.youtube.com": true, "www.facebook.com": true,
+		"www.instagram.com": true, "x.com": true, "www.netflix.com": true}
+	if len(probeTargets) != len(want) {
+		t.Fatalf("探测地址应为 %d 个，实际 %d", len(want), len(probeTargets))
+	}
+	for _, u := range probeTargets {
+		host := strings.TrimPrefix(u, "https://")
+		host = host[:strings.Index(host, "/")]
+		if !want[host] {
+			t.Errorf("意外的探测地址 %s", u)
+		}
+	}
+}
+
+// 能收到 2xx/3xx/4xx 说明经代理的整条链路是通的；5xx 与无响应（000）算失败
+func TestProbeCodeOK(t *testing.T) {
+	for code, ok := range map[string]bool{"204": true, "200": true, "301": true, "302": true, "404": true,
+		"500": false, "502": false, "000": false, "": false} {
+		if probeCodeOK(code) != ok {
+			t.Errorf("状态码 %q 期望 %v", code, ok)
+		}
+	}
+}

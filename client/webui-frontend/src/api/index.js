@@ -84,6 +84,7 @@ export const api = {
   triggerUpgrade() { return request('/api/upgrade', { method: 'POST' }) },
   getUpgradeLog(offset = 0) { return request('/api/upgrade/log?offset=' + offset) },
   getXrayAlert() { return request('/api/xray/alert') },
+  getCertAlerts() { return request('/api/nodes/cert-alerts') },
   dismissXrayAlert() { return request('/api/xray/alert/dismiss', { method: 'POST' }) },
   peerQRCodeURL(id, endpoint) {
     const q = endpoint ? '?endpoint=' + encodeURIComponent(endpoint) : ''

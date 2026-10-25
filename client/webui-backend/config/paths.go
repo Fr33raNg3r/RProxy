@@ -13,7 +13,7 @@ const (
 	WGServerPrivKey = "/opt/rproxy-gw/config/wireguard/server_privatekey"
 	WGServerPubKey  = "/opt/rproxy-gw/config/wireguard/server_publickey"
 	WGConfPath      = "/etc/wireguard/wg0.conf"
-	HealthFile      = "/opt/rproxy-gw/data/health.json"
+	HealthFile      = "/run/rproxy-gw/health.json" // watchdog 每轮都写，放内存文件系统免得磨损闪存
 	FailbackState   = "/opt/rproxy-gw/data/failback.json"
 
 	DNSWhitelistPath = "/opt/rproxy-gw/config/dns/whitelist.txt"

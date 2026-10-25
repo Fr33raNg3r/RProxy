@@ -1,9 +1,10 @@
 [Unit]
-Description=RProxy Health Check Timer (every 60s)
+Description=RProxy Health Check Timer (60s after each run)
 
 [Timer]
 OnBootSec=60s
-OnUnitActiveSec=60s
+# 从上一轮结束算起：脚本会在本轮里等到随机的探测时间再测，用 OnUnitActiveSec 会与下一轮重叠
+OnUnitInactiveSec=60s
 AccuracySec=5s
 Unit=rproxy-gw-watchdog.service
 

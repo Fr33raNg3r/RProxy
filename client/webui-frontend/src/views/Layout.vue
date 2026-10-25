@@ -44,6 +44,15 @@
         {{ xrayAlert.message }}
         <span v-if="xrayAlert.time" class="text-muted text-sm">（{{ xrayAlert.time }}）</span>
       </n-alert>
+      <!-- 节点证书快到期：不能关闭，续期成功后下次检查（12 小时内）自动消失 -->
+      <n-alert
+        v-if="certAlerts.length"
+        type="warning"
+        title="节点证书即将到期"
+        style="margin-bottom: 14px;"
+      >
+        <div v-for="a in certAlerts" :key="a.node_id">{{ a.message }}</div>
+      </n-alert>
       <router-view />
     </main>
 
@@ -96,6 +105,7 @@ const message = useMessage()
 const mobileMenuOpen = ref(false)
 const version = ref({ current: '', latest: '', has_update: false, check_error: '' })
 const xrayAlert = ref({ active: false, time: '', message: '' })
+const certAlerts = ref([])
 const upgrading = ref(false)
 const refreshingLatest = ref(false)
 
@@ -278,6 +288,12 @@ async function logout() {
   router.push('/login')
 }
 
+async function loadCertAlerts() {
+  try {
+    certAlerts.value = (await api.getCertAlerts()).alerts || []
+  } catch {}
+}
+
 async function loadXrayAlert() {
   try {
     xrayAlert.value = await api.getXrayAlert()
@@ -292,6 +308,7 @@ async function onDismissXrayAlert() {
 onMounted(() => {
   loadVersion()
   loadXrayAlert()
+  loadCertAlerts()
 })
 onUnmounted(() => {
   if (upgradePollTimer) clearInterval(upgradePollTimer)

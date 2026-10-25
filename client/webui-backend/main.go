@@ -7,11 +7,13 @@
 //	webui render-wg          - 根据 peers.json 重新生成 wg0.conf
 //	webui switch-next-node   - 切换到下一个启用节点（watchdog 调用）
 //	webui failback-check     - 探测排在前面的节点，恢复后回切（watchdog 调用）
+//	webui dns-check          - 检查本机 mosdns 能否应答（watchdog 调用）
 package main
 
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
@@ -33,6 +35,7 @@ func usage() {
   webui render-update-timer 按 webui.json 重建每日更新 timer（升级时用，保住自定义时间）
   webui switch-next-node   切换到下一个启用的节点
   webui failback-check     探测排在前面的节点，恢复后自动回切
+  webui dns-check          检查本机 mosdns 能否应答（失败退出码 1）
   webui version            打印版本号
 `, Version)
 }
@@ -60,6 +63,8 @@ func main() {
 		runSwitchNextNode()
 	case "failback-check":
 		runFailbackCheck()
+	case "dns-check":
+		runDNSCheck()
 	case "version":
 		fmt.Println(Version)
 	case "-h", "--help", "help":
@@ -162,6 +167,19 @@ func runFailbackCheck() {
 	if msg != "" {
 		fmt.Println(msg)
 	}
+}
+
+// runDNSCheck 向本机 mosdns 查询一个国内域名（不走代理，只检验 mosdns 本身能否应答），重试一次。
+// 不用 dig：旁路由没装 dnsutils，也就不必为此在升级时新增 apt 依赖
+func runDNSCheck() {
+	var err error
+	for i := 0; i < 2; i++ {
+		if err = services.CheckDNS("127.0.0.1:53", "www.baidu.com", 3*time.Second); err == nil {
+			return
+		}
+	}
+	fmt.Fprintln(os.Stderr, "本机 DNS 无应答:", err)
+	os.Exit(1)
 }
 
 func runSwitchNextNode() {

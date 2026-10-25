@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -121,8 +122,32 @@ func probeNodeViaXray(n config.Node) bool {
 	if !ready {
 		return false
 	}
-	_, err = TestNode(port)
-	return err == nil
+	return probeViaSocks(port)
+}
+
+// probeTargets 代理探测地址，每次随机挑一个，访问目标不固定、与日常上网流量混在一起
+// （与 scripts/watchdog.sh 的 PROBE_URLS 保持一致；WebUI 的节点"测试"按钮仍固定用 Google generate_204）
+var probeTargets = []string{
+	"https://www.google.com/generate_204",
+	"https://www.youtube.com/generate_204",
+	"https://www.facebook.com/favicon.ico",
+	"https://www.instagram.com/favicon.ico",
+	"https://x.com/favicon.ico",
+	"https://www.netflix.com/favicon.ico",
+}
+
+// probeCodeOK 经代理收到 2xx/3xx/4xx 就说明整条链路是通的（favicon 返回 200、部分站点按地区跳转）；
+// 5xx 与无响应（000）算失败。这些站点大陆都无法直连，不会把没走代理误判为正常
+func probeCodeOK(code string) bool {
+	return len(code) == 3 && code[0] >= '2' && code[0] <= '4'
+}
+
+// probeViaSocks 经指定 SOCKS 端口访问一个随机挑选的探测地址
+func probeViaSocks(socksPort int) bool {
+	url := probeTargets[rand.Intn(len(probeTargets))]
+	out, _ := RunCmd(CmdTimeoutShort, "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+		"--max-time", "8", "--socks5-hostname", fmt.Sprintf("127.0.0.1:%d", socksPort), url)
+	return probeCodeOK(string(out))
 }
 
 func loadFailbackState() failbackState {

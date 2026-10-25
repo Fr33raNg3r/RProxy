@@ -151,6 +151,23 @@ renew_cert() {
     fi
 }
 
+# ---------- 4. 证书剩余天数 ----------
+# 服务端没有界面：剩余不足有效期 1/5 时记一条告警（客户端 WebUI 会同时显示告警），平时只记剩余天数
+log_cert_days() {
+    local crt="${SSL_DIR}/server.crt" start end now total left
+    [[ -f "$crt" ]] || return 0
+    start=$(date -d "$(openssl x509 -startdate -noout -in "$crt" | cut -d= -f2)" +%s 2>/dev/null) || return 0
+    end=$(date -d "$(openssl x509 -enddate -noout -in "$crt" | cut -d= -f2)" +%s 2>/dev/null) || return 0
+    now=$(date +%s)
+    total=$(( end - start ))
+    left=$(( end - now ))
+    if (( left < total / 5 )); then
+        log_to_file "【告警】证书剩余 $(( left / 86400 )) 天（有效期 $(( total / 86400 )) 天），自动续期可能一直失败，请检查 acme.sh 日志"
+    else
+        log_to_file "证书剩余 $(( left / 86400 )) 天"
+    fi
+}
+
 # ---------- 主流程 ----------
 
 if check_self_update; then
@@ -160,6 +177,7 @@ fi
 
 update_xray
 renew_cert
+log_cert_days
 prune_logs
 
 log_to_file "================ 更新完成 ================"
