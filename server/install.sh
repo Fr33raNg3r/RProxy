@@ -28,28 +28,6 @@ else
 fi
 
 # ============================================================================
-# 清理 1.4.7 / 1.4.8 改名迁移留下的兼容软链接和迁移前备份包
-# ============================================================================
-cleanup_legacy_tproxy() {
-    # 1.5.0 起不再提供迁移：仍是未迁移的旧布局时拒绝升级，避免装出半新半旧的系统
-    if [[ -d /opt/tproxy-server && ! -L /opt/tproxy-server ]]; then
-        die "检测到未迁移的旧版安装（/opt/tproxy-server），请先用 1.4.8 的脚本完成迁移后再升级：
-    bash <(curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/v1.4.8/server/install.sh) upgrade 1.4.8"
-    fi
-    # 删证书目录软链接前再确认一次 acme.sh 续期路径已指向新目录，否则续期会写到不存在的路径
-    grep -rIl 'tproxy-server' "${ACME_HOME}" --include='*.conf' 2>/dev/null \
-        | xargs -r sed -i -e "s#/var/www/tproxy-server#${WEB_ROOT}#g" -e "s#/etc/ssl/tproxy-server#${SSL_DIR}#g"
-    local p
-    for p in /opt/tproxy-server /var/www/tproxy-server /etc/ssl/tproxy-server /usr/local/bin/tproxy-server; do
-        if [[ -L "$p" ]]; then rm -f "$p"; fi
-    done
-    rm -f /var/backups/tproxy-server-pre-rproxy-*.tar.gz
-    # 旧定时器（Persistent=true）留下的 stamp 记录，以及旧版升级用过的临时构建目录
-    rm -f /var/lib/systemd/timers/stamp-tproxy-server-*.timer
-    rm -rf /tmp/tproxy-server-build
-}
-
-# ============================================================================
 # 主菜单
 # ============================================================================
 
@@ -714,7 +692,6 @@ action_upgrade() {
     require_root
     check_arch
     check_debian13
-    cleanup_legacy_tproxy
     is_installed || die "未检测到已有安装，请先全新安装"
 
     log_info "开始升级"

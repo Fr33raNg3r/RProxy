@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -36,13 +37,16 @@ func ReadServerPublicKey() (string, error) {
 // ----------------- 客户端密钥 -----------------
 
 func GenerateKeyPair() (priv, pub string, err error) {
-	out, err := exec.Command("wg", "genkey").Output()
+	out, err := RunCmd(CmdTimeoutShort, "wg", "genkey")
 	if err != nil {
 		return "", "", fmt.Errorf("wg genkey: %w", err)
 	}
 	priv = strings.TrimSpace(string(out))
 
-	cmd := exec.Command("wg", "pubkey")
+	// 需要从 stdin 喂私钥，RunCmd 不支持，单独加超时
+	ctx, cancel := context.WithTimeout(context.Background(), CmdTimeoutShort)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "wg", "pubkey")
 	cmd.Stdin = strings.NewReader(priv)
 	pubBytes, err := cmd.Output()
 	if err != nil {
@@ -53,7 +57,7 @@ func GenerateKeyPair() (priv, pub string, err error) {
 }
 
 func GeneratePresharedKey() (string, error) {
-	out, err := exec.Command("wg", "genpsk").Output()
+	out, err := RunCmd(CmdTimeoutShort, "wg", "genpsk")
 	if err != nil {
 		return "", err
 	}
@@ -103,11 +107,7 @@ func RenderWGConfig(cfg *config.WebUIConfig, peers []config.WGPeer) error {
 	if err := os.MkdirAll("/etc/wireguard", 0700); err != nil {
 		return err
 	}
-	tmp := config.WGConfPath + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, config.WGConfPath)
+	return config.WriteFileAtomic(config.WGConfPath, buf.Bytes(), 0600)
 }
 
 // 计算服务端地址：x.x.x.1/<前缀>
@@ -160,15 +160,15 @@ func AllocatePeerIP(subnet string, used []string) (string, error) {
 // ----------------- WG 服务管理 -----------------
 
 func RestartWG() error {
-	_ = exec.Command("systemctl", "stop", "wg-quick@wg0").Run()
-	if err := exec.Command("systemctl", "start", "wg-quick@wg0").Run(); err != nil {
+	_ = RunCmdErr(CmdTimeoutLong, "systemctl", "stop", "wg-quick@wg0")
+	if err := RunCmdErr(CmdTimeoutLong, "systemctl", "start", "wg-quick@wg0"); err != nil {
 		return err
 	}
-	return exec.Command("systemctl", "enable", "wg-quick@wg0").Run()
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "enable", "wg-quick@wg0")
 }
 
 func StopWG() error {
-	return exec.Command("systemctl", "stop", "wg-quick@wg0").Run()
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "stop", "wg-quick@wg0")
 }
 
 // ----------------- 流量统计 -----------------
@@ -182,7 +182,7 @@ type PeerTransfer struct {
 // GetWGTransfers 解析 `wg show wg0 transfer`
 // 输出格式：<pubkey>\t<rx>\t<tx>
 func GetWGTransfers() ([]PeerTransfer, error) {
-	out, err := exec.Command("wg", "show", config.WGInterface, "transfer").Output()
+	out, err := RunCmd(CmdTimeoutShort, "wg", "show", config.WGInterface, "transfer")
 	if err != nil {
 		return []PeerTransfer{}, nil // wg 可能未启动，返回空
 	}

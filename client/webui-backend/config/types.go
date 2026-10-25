@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // ----------------- WebUI 总体配置 -----------------
@@ -82,11 +83,33 @@ var (
 func LoadWebUIConfig() (*WebUIConfig, error) {
 	muWebUI.Lock()
 	defer muWebUI.Unlock()
-	return loadWebUIConfigUnsafe()
+	return loadWebUICached(WebUIConfigPath)
 }
 
-func loadWebUIConfigUnsafe() (*WebUIConfig, error) {
-	b, err := os.ReadFile(WebUIConfigPath)
+// webui.json 解析缓存：鉴权中间件每个请求都要读配置，文件 mtime 和大小都没变时
+// 直接用上次的解析结果；watchdog 等其他进程改写文件后 mtime 会变，自动重新读取。
+// 调用前需持有 muWebUI
+var webUICache struct {
+	path    string
+	modTime time.Time
+	size    int64
+	cfg     WebUIConfig
+	valid   bool
+}
+
+func resetWebUICache() { webUICache.valid = false }
+
+func loadWebUICached(path string) (*WebUIConfig, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取 webui.json: %w", err)
+	}
+	if webUICache.valid && webUICache.path == path &&
+		webUICache.modTime.Equal(st.ModTime()) && webUICache.size == st.Size() {
+		c := webUICache.cfg // 返回副本：调用方会修改后再保存
+		return &c, nil
+	}
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("读取 webui.json: %w", err)
 	}
@@ -94,12 +117,15 @@ func loadWebUIConfigUnsafe() (*WebUIConfig, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("解析 webui.json: %w", err)
 	}
+	webUICache.path, webUICache.modTime, webUICache.size = path, st.ModTime(), st.Size()
+	webUICache.cfg, webUICache.valid = c, true
 	return &c, nil
 }
 
 func SaveWebUIConfig(c *WebUIConfig) error {
 	muWebUI.Lock()
 	defer muWebUI.Unlock()
+	resetWebUICache()
 	return writeJSONAtomic(WebUIConfigPath, c, 0600)
 }
 
@@ -156,16 +182,55 @@ func SaveWGPeers(peers []WGPeer) error {
 // ----------------- 工具 -----------------
 
 func writeJSONAtomic(path string, v interface{}, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, b, mode); err != nil {
+	return WriteFileAtomic(path, b, mode)
+}
+
+// WriteFileAtomic 原子写文件：写同目录下的唯一临时文件 → fsync → rename → fsync 目录。
+// 旁路由常被直接断电：不 fsync 时 rename 可能先于数据落盘，开机后得到 0 字节文件；
+// 临时文件名唯一，WebUI 与 watchdog 调用的 webui 子命令同时写同一文件也不会互相踩。
+func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	ok := false
+	defer func() {
+		if !ok {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	ok = true
+	// 目录 fsync 让 rename 本身落盘；部分平台（如 Windows）不支持，忽略错误
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }

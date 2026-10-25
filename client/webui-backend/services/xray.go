@@ -60,21 +60,26 @@ func RenderXrayConfig(nodes []config.Node, currentNodeID string) error {
 	}
 
 	// 验证配置语法（用 -format=json 显式指定）
-	if out, err := exec.Command("xray", "run", "-test", "-format=json", "-c", tmp).CombinedOutput(); err != nil {
+	if out, err := RunCmdCombined(CmdTimeoutLong, "xray", "run", "-test", "-format=json", "-c", tmp); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("xray 配置验证失败: %s\n%s", err, string(out))
 	}
 
-	return os.Rename(tmp, config.XrayConfPath)
+	// 临时文件只用于 -test 校验；正式配置走 fsync 的原子写，断电不会留下空配置
+	os.Remove(tmp)
+	return config.WriteFileAtomic(config.XrayConfPath, b, 0644)
 }
 
 func buildXrayBaseConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"log": map[string]interface{}{
 			"loglevel": "warning",
-			// 写到 /var/log/xray/，这个目录由 Xray 官方安装脚本创建，nobody 有写权限
-			"access": "/var/log/xray/access.log",
-			"error":  "/var/log/xray/error.log",
+			// access log 每条透明代理连接写一行，写盘量大、磨损 eMMC/SD 卡，默认关闭（"none"）；
+			// 排障需要时可临时把 config.json 里的 access 改为 /var/log/xray/access.log 并重启 Xray
+			// （下次切换节点重新生成配置时会恢复为 none）。
+			// error log 写到 /var/log/xray/，这个目录由 Xray 官方安装脚本创建，nobody 有写权限
+			"access": "none",
+			"error":  config.XrayErrorLogPath,
 		},
 		"inbounds": []interface{}{
 			// TPROXY 入口
@@ -330,14 +335,14 @@ func applyNodeSwitch(cfg *config.WebUIConfig, nodes []config.Node, nextID string
 // systemctl restart 是异步的，命令返回 0 不代表 Xray 真的稳定运行
 // 这里等待 2 秒后用 systemctl is-active 验证，捕获崩溃情况
 func RestartXray() error {
-	if err := exec.Command("systemctl", "restart", "xray").Run(); err != nil {
+	if err := RunCmdErr(CmdTimeoutLong, "systemctl", "restart", "xray"); err != nil {
 		return fmt.Errorf("systemctl restart 失败: %w", err)
 	}
 	// 等待 2 秒让 Xray 完成启动（或崩溃）
 	time.Sleep(2 * time.Second)
 	if !IsServiceActive("xray") {
 		// 取最近 20 行 Xray 日志返回给调用者
-		out, _ := exec.Command("journalctl", "-u", "xray", "-n", "20", "--no-pager").CombinedOutput()
+		out, _ := RunCmdCombined(CmdTimeoutShort, "journalctl", "-u", "xray", "-n", "20", "--no-pager")
 		return fmt.Errorf("Xray 启动后崩溃，最近日志:\n%s", string(out))
 	}
 	return nil

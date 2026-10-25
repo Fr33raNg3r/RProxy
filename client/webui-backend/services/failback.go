@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"time"
 
@@ -138,18 +137,11 @@ func loadFailbackState() failbackState {
 }
 
 func saveFailbackState(s failbackState) error {
-	if err := os.MkdirAll(filepath.Dir(config.FailbackState), 0755); err != nil {
-		return err
-	}
 	b, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}
-	tmp := config.FailbackState + ".tmp"
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, config.FailbackState)
+	return config.WriteFileAtomic(config.FailbackState, b, 0644)
 }
 
 // FailbackCheck 由 watchdog 每分钟调用（仅在代理正常时）。
@@ -181,11 +173,40 @@ func FailbackCheck() (string, error) {
 		return "", saveFailbackState(failbackState{Streaks: streaks})
 	}
 
+	// 探测耗时较长，期间管理员可能在 WebUI 改过配置：切换前重读最新配置，
+	// 避免把探测前读到的旧配置整体写回去覆盖掉管理员的修改
+	fresh, err := config.LoadWebUIConfig()
+	if err != nil {
+		return "", err
+	}
+	freshNodes, err := config.LoadNodes()
+	if err != nil {
+		return "", err
+	}
+	if !failbackStillValid(cfg.CurrentNodeID, fresh, freshNodes, target.ID) {
+		// 已手动切换 / 目标被删：放弃本次回切，计数清零
+		return "", saveFailbackState(failbackState{Streaks: map[string]int{}})
+	}
+
 	// 切回目标节点；若前面还有更优先的节点，保持 AutoSwitched 以便继续回切
-	cfg.AutoSwitched = len(nodesBefore(nodes, target.ID)) > 0
-	if err := applyNodeSwitch(cfg, nodes, target.ID); err != nil {
+	fresh.AutoSwitched = len(nodesBefore(freshNodes, target.ID)) > 0
+	if err := applyNodeSwitch(fresh, freshNodes, target.ID); err != nil {
 		return "", err
 	}
 	_ = saveFailbackState(failbackState{Streaks: map[string]int{}})
 	return fmt.Sprintf("节点 %s 已恢复，回切到该节点", target.Name), nil
+}
+
+// failbackStillValid 判断重读到的最新配置是否仍允许回切：
+// 仍处于自动切换状态、当前节点没被改动、目标节点还在
+func failbackStillValid(probedCurrentID string, fresh *config.WebUIConfig, freshNodes []config.Node, targetID string) bool {
+	if !fresh.AutoSwitched || fresh.CurrentNodeID != probedCurrentID {
+		return false
+	}
+	for _, n := range freshNodes {
+		if n.ID == targetID {
+			return true
+		}
+	}
+	return false
 }

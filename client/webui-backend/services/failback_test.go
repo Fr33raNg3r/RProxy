@@ -134,3 +134,24 @@ func TestBuildProbeConfigIsIsolatedFromMainXray(t *testing.T) {
 		t.Error("临时配置不应包含 TPROXY 入口或落盘日志")
 	}
 }
+
+// 探测期间管理员可能改了配置：切换前重读到的最新状态必须仍满足回切条件，否则放弃本次回切
+func TestFailbackStillValid(t *testing.T) {
+	nodes := []config.Node{{ID: "a", Order: 0}, {ID: "b", Order: 1}}
+	cases := []struct {
+		name  string
+		fresh config.WebUIConfig
+		nodes []config.Node
+		want  bool
+	}{
+		{"状态未变", config.WebUIConfig{AutoSwitched: true, CurrentNodeID: "b"}, nodes, true},
+		{"管理员手动切换清除了 AutoSwitched", config.WebUIConfig{AutoSwitched: false, CurrentNodeID: "b"}, nodes, false},
+		{"当前节点已被改成别的", config.WebUIConfig{AutoSwitched: true, CurrentNodeID: "a"}, nodes, false},
+		{"目标节点已被删除", config.WebUIConfig{AutoSwitched: true, CurrentNodeID: "b"}, []config.Node{{ID: "b", Order: 1}}, false},
+	}
+	for _, c := range cases {
+		if got := failbackStillValid("b", &c.fresh, c.nodes, "a"); got != c.want {
+			t.Errorf("%s: 期望 %v，实际 %v", c.name, c.want, got)
+		}
+	}
+}

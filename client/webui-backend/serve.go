@@ -14,6 +14,7 @@ import (
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
 
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
 func runServe() {
@@ -109,7 +110,7 @@ func runServe() {
 	})
 
 	// ---------- 静态文件（Vue 构建产物） ----------
-	r.Get("/*", spaHandler)
+	r.Get("/*", staticHandler(http.HandlerFunc(spaHandler)).ServeHTTP)
 
 	// 同时在 443 提供 HTTPS（自签名证书），这样 http / https 访问都能正常登录；
 	// HTTPS 起不来不影响主端口
@@ -157,6 +158,21 @@ func restartComponentByPath(w http.ResponseWriter, r *http.Request) {
 	q.Set("name", name)
 	r2.URL.RawQuery = q.Encode()
 	handlers.RestartComponent(w, r2)
+}
+
+// staticHandler 给静态文件加缓存头和 gzip（只用于静态路由，不影响 API / SSE）：
+// /assets/* 是 Vite 构建的带哈希文件名，内容变了文件名就变，可长期缓存；
+// index.html 等其他路径用 no-cache，每次向服务端协商，升级后浏览器立即拿到新页面
+func staticHandler(next http.Handler) http.Handler {
+	compressed := chimw.Compress(5)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		compressed.ServeHTTP(w, r)
+	})
 }
 
 // spaHandler: 返回静态文件，如果文件不存在则返回 index.html（SPA 路由）

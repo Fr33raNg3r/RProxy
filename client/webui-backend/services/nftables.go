@@ -3,7 +3,6 @@ package services
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -54,12 +53,8 @@ func updateNftablesConfFile(newPort int) error {
 	replacement := fmt.Sprintf("${1}udp sport %d return${2}", newPort)
 	updated := wgSportRuleFileRe.ReplaceAll(b, []byte(replacement))
 
-	tmp := config.NftablesConfPath + ".tmp"
-	if err := os.WriteFile(tmp, updated, 0644); err != nil {
-		return fmt.Errorf("写临时文件: %w", err)
-	}
-	if err := os.Rename(tmp, config.NftablesConfPath); err != nil {
-		return fmt.Errorf("替换 %s: %w", config.NftablesConfPath, err)
+	if err := config.WriteFileAtomic(config.NftablesConfPath, updated, 0644); err != nil {
+		return fmt.Errorf("写入 %s: %w", config.NftablesConfPath, err)
 	}
 	return nil
 }
@@ -70,7 +65,7 @@ func updateNftablesConfFile(newPort int) error {
 // 如果 nftables 还没载入（表/链不存在）就跳过 —— 此时持久化文件已更新，
 // 下次 nft -f 时新端口自动生效。
 func replaceWGSportRuleRuntime(newPort int) error {
-	out, err := exec.Command("nft", "-a", "list", "chain", "inet", "tp", "output").Output()
+	out, err := RunCmd(CmdTimeoutShort, "nft", "-a", "list", "chain", "inet", "tp", "output")
 	if err != nil {
 		// 表/链未加载（如 nftables 服务未启动），不算致命 —— 文件已写，下次加载即生效。
 		return nil
@@ -88,7 +83,7 @@ func replaceWGSportRuleRuntime(newPort int) error {
 		"handle", handle,
 		"udp", "sport", fmt.Sprintf("%d", newPort), "return",
 	}
-	cmdOut, err := exec.Command("nft", args...).CombinedOutput()
+	cmdOut, err := RunCmdCombined(CmdTimeoutShort, "nft", args...)
 	if err != nil {
 		return fmt.Errorf("nft replace rule: %w, 输出: %s", err, strings.TrimSpace(string(cmdOut)))
 	}

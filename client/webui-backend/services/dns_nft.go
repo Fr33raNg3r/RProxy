@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -29,8 +28,8 @@ func SyncDNSToNftables(u config.DNSUpstreams) error {
 			// 国内上游正常都是 IP；域名形式跳过（无法判断地区，盲加可能误送代理）
 			continue
 		}
-		_ = exec.Command("nft", "add", "element", "inet", "tp", "cn_ips",
-			fmt.Sprintf("{ %s/32 }", host)).Run()
+		_ = RunCmdErr(CmdTimeoutShort, "nft", "add", "element", "inet", "tp", "cn_ips",
+			fmt.Sprintf("{ %s/32 }", host))
 	}
 
 	// ---------- 国外 DoH 上游 → force_proxy_ips ----------
@@ -53,12 +52,12 @@ func SyncDNSToNftables(u config.DNSUpstreams) error {
 		dohIPs = append(dohIPs, ips...)
 	}
 
-	if err := exec.Command("nft", "flush", "set", "inet", "tp", "force_proxy_ips").Run(); err != nil {
+	if err := RunCmdErr(CmdTimeoutShort, "nft", "flush", "set", "inet", "tp", "force_proxy_ips"); err != nil {
 		return fmt.Errorf("flush force_proxy_ips: %w", err)
 	}
 	for _, ip := range dohIPs {
-		if err := exec.Command("nft", "add", "element", "inet", "tp", "force_proxy_ips",
-			fmt.Sprintf("{ %s }", ip)).Run(); err != nil {
+		if err := RunCmdErr(CmdTimeoutShort, "nft", "add", "element", "inet", "tp", "force_proxy_ips",
+			fmt.Sprintf("{ %s }", ip)); err != nil {
 			return fmt.Errorf("add %s to force_proxy_ips: %w", ip, err)
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 )
 
 const interfacesPath = "/etc/network/interfaces"
@@ -69,17 +71,13 @@ func WriteInterfacesFile(iface, cidr, gateway string) error {
 	fmt.Fprintf(&buf, "    address %s\n", cidr)
 	fmt.Fprintf(&buf, "    gateway %s\n", gateway)
 
-	tmp := interfacesPath + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, interfacesPath)
+	return config.WriteFileAtomic(interfacesPath, buf.Bytes(), 0644)
 }
 
 // DetectCurrentNetwork 实时探测本机当前默认网卡 / IP(CIDR) / 网关，
 // 供 WebUI 在 webui.json 尚未记录 lan_* 时显示真实现状。探测失败的字段返回空串。
 func DetectCurrentNetwork() (iface, cidr, gateway string) {
-	if out, err := exec.Command("ip", "route").Output(); err == nil {
+	if out, err := RunCmd(CmdTimeoutShort, "ip", "route"); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			f := strings.Fields(line)
 			if len(f) < 5 || f[0] != "default" {
@@ -97,7 +95,7 @@ func DetectCurrentNetwork() (iface, cidr, gateway string) {
 		}
 	}
 	if iface != "" {
-		if out, err := exec.Command("ip", "-o", "-f", "inet", "addr", "show", iface).Output(); err == nil {
+		if out, err := RunCmd(CmdTimeoutShort, "ip", "-o", "-f", "inet", "addr", "show", iface); err == nil {
 			f := strings.Fields(string(out))
 			for i := 0; i < len(f)-1; i++ {
 				if f[i] == "inet" {

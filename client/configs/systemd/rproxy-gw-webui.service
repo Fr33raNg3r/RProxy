@@ -1,6 +1,9 @@
 [Unit]
 Description=RProxy WebUI Management Panel
 After=network.target
+# 启动频率限制必须写在 [Unit]，写在 [Service] 会被 systemd 忽略
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
@@ -8,8 +11,6 @@ ExecStart=/opt/rproxy-gw/bin/webui serve
 WorkingDirectory=/opt/rproxy-gw
 Restart=on-failure
 RestartSec=5s
-StartLimitBurst=5
-StartLimitIntervalSec=60
 # WebUI 需要执行 systemctl / nft / wg 等命令，故以 root 运行
 User=root
 Group=root

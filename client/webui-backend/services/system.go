@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
@@ -31,27 +30,27 @@ Unit=rproxy-gw-update.service
 [Install]
 WantedBy=timers.target
 `, hour, minute, hour, minute)
-	if err := os.WriteFile(UpdateTimerFile, []byte(content), 0644); err != nil {
+	if err := config.WriteFileAtomic(UpdateTimerFile, []byte(content), 0644); err != nil {
 		return err
 	}
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+	if err := RunCmdErr(CmdTimeoutShort, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
-	return exec.Command("systemctl", "restart", "rproxy-gw-update.timer").Run()
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "restart", "rproxy-gw-update.timer")
 }
 
 // IsServiceActive 检查 systemd 服务是否运行
 func IsServiceActive(name string) bool {
-	out, _ := exec.Command("systemctl", "is-active", name).Output()
+	out, _ := RunCmd(CmdTimeoutShort, "systemctl", "is-active", name)
 	return strings.TrimSpace(string(out)) == "active"
 }
 
 func RestartService(name string) error {
-	return exec.Command("systemctl", "restart", name).Run()
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "restart", name)
 }
 
 func StopService(name string) error {
-	return exec.Command("systemctl", "stop", name).Run()
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "stop", name)
 }
 
 // HealthData watchdog 写入的健康检查结果
@@ -86,7 +85,7 @@ func JournalLog(unit string, lines int) (string, error) {
 	}
 	// --reverse：最新的日志排在最前面，WebUI 无需手动拖到底部
 	args := []string{"-u", unit, "--no-pager", "--reverse", "-n", strconv.Itoa(lines)}
-	out, err := exec.Command("journalctl", args...).Output()
+	out, err := RunCmd(CmdTimeoutShort, "journalctl", args...)
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +105,7 @@ func TailFile(path string, lines int) (string, error) {
 		}
 		return "", err
 	}
-	out, err := exec.Command("tail", "-n", strconv.Itoa(lines), path).Output()
+	out, err := RunCmd(CmdTimeoutShort, "tail", "-n", strconv.Itoa(lines), path)
 	if err != nil {
 		return "", err
 	}
@@ -124,7 +123,7 @@ func TailFile(path string, lines int) (string, error) {
 // GetExternalIP 取本机外网 IP（用于 WG 客户端 endpoint）
 // 优先返回第一个非环回 IP；找不到则返回空字符串
 func GetExternalIP() string {
-	out, err := exec.Command("hostname", "-I").Output()
+	out, err := RunCmd(CmdTimeoutShort, "hostname", "-I")
 	if err != nil {
 		return ""
 	}

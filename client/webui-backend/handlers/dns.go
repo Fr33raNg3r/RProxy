@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
@@ -40,42 +39,42 @@ func UpdateDNSRules(w http.ResponseWriter, r *http.Request) {
 	// 黑白名单按行拆分：IP/CIDR 走静态文件（nftables set），域名走 .txt（mosdns）
 	if req.Whitelist != nil {
 		domains, ips := splitRules(*req.Whitelist)
-		if err := os.WriteFile(config.DNSWhitelistPath, []byte(domains), 0600); err != nil {
+		if err := config.WriteFileAtomic(config.DNSWhitelistPath, []byte(domains), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
-		if err := os.WriteFile(config.DNSWhitelistIPsPath, []byte(ips), 0600); err != nil {
+		if err := config.WriteFileAtomic(config.DNSWhitelistIPsPath, []byte(ips), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
 	}
 	if req.Blacklist != nil {
 		domains, ips := splitRules(*req.Blacklist)
-		if err := os.WriteFile(config.DNSBlacklistPath, []byte(domains), 0600); err != nil {
+		if err := config.WriteFileAtomic(config.DNSBlacklistPath, []byte(domains), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
-		if err := os.WriteFile(config.DNSBlacklistIPsPath, []byte(ips), 0600); err != nil {
+		if err := config.WriteFileAtomic(config.DNSBlacklistIPsPath, []byte(ips), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
 	}
 	if req.Hosts != nil {
-		if err := os.WriteFile(config.DNSHostsPath, []byte(*req.Hosts), 0600); err != nil {
+		if err := config.WriteFileAtomic(config.DNSHostsPath, []byte(*req.Hosts), 0600); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 			return
 		}
 	}
 	// 清空白/黑名单 IP 集合——避免旧 IP 残留干扰
 	// 错误忽略：如果集合不存在（如 nftables 还没加载），不算严重问题
-	_ = exec.Command("nft", "flush", "set", "inet", "tp", "whitelist_ips").Run()
-	_ = exec.Command("nft", "flush", "set", "inet", "tp", "blacklist_ips").Run()
+	_ = services.RunCmdErr(services.CmdTimeoutShort, "nft", "flush", "set", "inet", "tp", "whitelist_ips")
+	_ = services.RunCmdErr(services.CmdTimeoutShort, "nft", "flush", "set", "inet", "tp", "blacklist_ips")
 	// flush 后把用户填的静态 IP 重新灌进两个 set（域名靠下面 mosdns 重启后解析自愈）
-	_ = exec.Command(loadStaticIPsScript).Run()
+	_ = services.RunCmdErr(services.CmdTimeoutLong, loadStaticIPsScript)
 
 	// 通知 mosdns reload（v5 支持 SIGHUP 重载，或直接重启）
 	// 重启 mosdns 同时也会清掉它内部的 DNS 缓存
-	_ = exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run()
+	_ = services.RunCmdErr(services.CmdTimeoutLong, "systemctl", "restart", "rproxy-gw-mosdns")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 

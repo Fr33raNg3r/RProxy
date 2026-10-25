@@ -11,8 +11,9 @@ import (
 	"math/big"
 	"net"
 	"os"
-	"path/filepath"
 	"time"
+
+	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 )
 
 // ensureSelfSignedCert 保证证书和私钥文件存在：已存在则沿用，否则生成一对自签名证书。
@@ -53,13 +54,11 @@ func ensureSelfSignedCert(certPath, keyPath string) error {
 		return fmt.Errorf("编码私钥: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(certPath), 0755); err != nil {
+	// 先写私钥再写证书：上面只要两个文件都在就沿用，断电时宁可缺证书（下次重新生成）也不要留下不配对的一对
+	if err := config.WriteFileAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
-		return err
-	}
-	return os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0600)
+	return config.WriteFileAtomic(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644)
 }
 
 // localIPs 返回本机所有网卡地址，写进证书的 SAN

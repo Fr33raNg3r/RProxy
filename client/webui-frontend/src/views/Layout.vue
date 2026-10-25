@@ -7,7 +7,8 @@
         <div v-if="version.current" class="brand-version">v{{ version.current }}</div>
         <div class="brand-latest">
           <span class="text-muted">最新：</span>
-          <span v-if="!version.latest || version.latest === '未知'" class="text-muted">检查中…</span>
+          <span v-if="version.check_error" style="color: #f87171;" :title="version.check_error">检查失败</span>
+          <span v-else-if="!version.latest || version.latest === '未知'" class="text-muted">检查中…</span>
           <span v-else-if="version.has_update" style="color: #fbbf24;">v{{ version.latest }}</span>
           <span v-else style="color: #4ade80;">v{{ version.latest }}（已是最新）</span>
           <n-button size="tiny" text @click="onRefreshLatest" :loading="refreshingLatest" style="margin-left: 6px;" title="重新检查"><template #icon><SvgIcon name="refresh" /></template></n-button>
@@ -93,7 +94,7 @@ const dialog = useDialog()
 const message = useMessage()
 
 const mobileMenuOpen = ref(false)
-const version = ref({ current: '', latest: '', has_update: false })
+const version = ref({ current: '', latest: '', has_update: false, check_error: '' })
 const xrayAlert = ref({ active: false, time: '', message: '' })
 const upgrading = ref(false)
 const refreshingLatest = ref(false)
@@ -143,6 +144,7 @@ async function onRefreshLatest() {
   refreshingLatest.value = true
   try {
     version.value = await api.refreshLatestVersion()
+    if (version.value.check_error) message.error('检查更新失败：' + version.value.check_error)
   } catch (e) {
     message.error('检查更新失败：' + e.message)
   } finally {

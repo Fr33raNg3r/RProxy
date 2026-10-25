@@ -1,11 +1,9 @@
 package services
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"text/template"
 	"time"
 
@@ -23,35 +21,21 @@ func RenderMosdnsConfig(u config.DNSUpstreams) error {
 		return fmt.Errorf("解析 mosdns 模板: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(config.MosdnsConfigPath), 0755); err != nil {
-		return err
-	}
-
-	tmp := config.MosdnsConfigPath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	if err := tpl.Execute(f, u); err != nil {
-		f.Close()
-		os.Remove(tmp)
+	var buf bytes.Buffer
+	if err := tpl.Execute(&buf, u); err != nil {
 		return fmt.Errorf("渲染 mosdns 模板: %w", err)
 	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, config.MosdnsConfigPath)
+	return config.WriteFileAtomic(config.MosdnsConfigPath, buf.Bytes(), 0644)
 }
 
 // RestartMosdns 重启 mosdns 并校验 2 秒后仍在运行。
 func RestartMosdns() error {
-	if err := exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run(); err != nil {
+	if err := RunCmdErr(CmdTimeoutLong, "systemctl", "restart", "rproxy-gw-mosdns"); err != nil {
 		return fmt.Errorf("systemctl restart 失败: %w", err)
 	}
 	time.Sleep(2 * time.Second)
 	if !IsServiceActive("rproxy-gw-mosdns") {
-		out, _ := exec.Command("journalctl", "-u", "rproxy-gw-mosdns", "-n", "20", "--no-pager").CombinedOutput()
+		out, _ := RunCmdCombined(CmdTimeoutShort, "journalctl", "-u", "rproxy-gw-mosdns", "-n", "20", "--no-pager")
 		return fmt.Errorf("mosdns 启动后崩溃，最近日志:\n%s", string(out))
 	}
 	return nil

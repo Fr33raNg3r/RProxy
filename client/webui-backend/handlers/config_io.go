@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"os/exec"
+	"os"
 	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
@@ -98,7 +100,9 @@ func ExportConfig(w http.ResponseWriter, r *http.Request) {
 
 // ImportConfig POST /api/config/import
 // body 为 YAML 文本（text/plain 或 application/x-yaml）
-// 替换 nodes / dns_upstreams 以及 webui 中允许的字段，然后重渲染并重启
+// 替换 nodes / dns_upstreams 以及 webui 中允许的字段，然后重渲染并重启。
+// 尽量做到"要么全部生效，要么不改"：先全部校验并做 Xray 配置校验，再写文件；
+// 写入或渲染中途失败时，把各 JSON 配置恢复到导入前并按旧配置重新生成。
 func ImportConfig(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -110,40 +114,36 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorMsg("YAML 解析失败: "+err.Error()))
 		return
 	}
-
-	// 基本校验（先填默认值：1.7.0 及更早导出的节点可能没有 protocol 或仍是 vmess-ws）
-	for i := range bundle.Nodes {
-		applyNodeDefaults(&bundle.Nodes[i])
-		if err := validateNode(&bundle.Nodes[i]); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorMsg("节点校验失败: "+err.Error()))
-			return
-		}
-	}
-	if bundle.WebUI.ListenPort < 1 || bundle.WebUI.ListenPort > 65535 {
-		writeJSON(w, http.StatusBadRequest, errorMsg("listen_port 无效"))
+	if err := validateImportBundle(&bundle); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
 		return
 	}
 
-	// DDNS 配置整理成固定三条并校验（格式不对整体拒绝，避免写入一半）
-	if bundle.DDNS != nil {
-		n := config.NormalizeDDNS(*bundle.DDNS)
-		bundle.DDNS = &n
-		if err := validateDDNSConfig(bundle.DDNS); err != nil {
-			writeJSON(w, http.StatusBadRequest, errorMsg("DDNS 配置校验失败: "+err.Error()))
-			return
-		}
+	// 最容易失败的一步（xray -test 校验）放在任何写入之前：失败时什么都没改
+	if err := services.RenderXrayConfig(bundle.Nodes, bundle.WebUI.CurrentNodeID); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg("渲染 Xray 配置失败（未做任何修改）: "+err.Error()))
+		return
+	}
+
+	snap := snapshotFiles([]string{
+		config.NodesPath, config.DNSUpstreamsPath, config.WebUIConfigPath, config.WGPeersPath, config.DDNSConfigPath,
+	})
+	fail := func(msg string) {
+		restoreFiles(snap)
+		rerenderFromDisk()
+		writeJSON(w, http.StatusInternalServerError, errorMsg(msg+"（已恢复为导入前的配置）"))
 	}
 
 	// 写 nodes.json
 	if err := config.SaveNodes(bundle.Nodes); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg("保存 nodes.json 失败: "+err.Error()))
+		fail("保存 nodes.json 失败: " + err.Error())
 		return
 	}
 
 	// 写 dns_upstreams.json（如果导入包含）
 	if bundle.DNS != nil {
 		if err := config.SaveDNSUpstreams(*bundle.DNS); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 dns_upstreams.json 失败: "+err.Error()))
+			fail("保存 dns_upstreams.json 失败: " + err.Error())
 			return
 		}
 	}
@@ -151,7 +151,7 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 	// 更新 webui.json（保留密码哈希、session_secret 等敏感字段）
 	cfg, err := config.LoadWebUIConfig()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
+		fail(err.Error())
 		return
 	}
 	cfg.ListenPort = bundle.WebUI.ListenPort
@@ -163,48 +163,50 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.WGSubnet = bundle.WebUI.WGSubnet
 	cfg.WGEndpoint = bundle.WebUI.WGEndpoint
 	if err := config.SaveWebUIConfig(cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
+		fail(err.Error())
 		return
 	}
 
-	// WireGuard peers：导入文件带了才整体替换，然后重渲染 wg0.conf
+	// WireGuard peers：导入文件带了才整体替换
 	if bundle.WGPeers != nil {
 		if err := config.SaveWGPeers(bundle.WGPeers); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 peers.json 失败: "+err.Error()))
+			fail("保存 peers.json 失败: " + err.Error())
+			return
+		}
+	}
+
+	// DDNS：导入文件带了才整体替换
+	if bundle.DDNS != nil {
+		if err := config.SaveDDNSConfig(*bundle.DDNS); err != nil {
+			fail("保存 ddns.json 失败: " + err.Error())
+			return
+		}
+	}
+
+	// 渲染 mosdns / wg0.conf（Xray 已在写入前渲染）
+	if bundle.DNS != nil {
+		if err := services.RenderMosdnsConfig(*bundle.DNS); err != nil {
+			fail("渲染 mosdns 配置失败: " + err.Error())
 			return
 		}
 	}
 	if bundle.WGPeers != nil || cfg.WGEnabled {
 		peers, _ := config.LoadWGPeers()
 		if err := services.RenderWGConfig(cfg, peers); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 wg0.conf 失败: "+err.Error()))
+			fail("渲染 wg0.conf 失败: " + err.Error())
 			return
-		}
-		if cfg.WGEnabled {
-			_ = services.RestartWG()
 		}
 	}
 
-	// DDNS：导入文件带了才整体替换，并立刻跑一轮
+	// 全部写入、渲染成功后再重启服务
+	if cfg.WGEnabled {
+		_ = services.RestartWG()
+	}
 	if bundle.DDNS != nil {
-		if err := config.SaveDDNSConfig(*bundle.DDNS); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("保存 ddns.json 失败: "+err.Error()))
-			return
-		}
 		go services.RunDDNSNow()
 	}
-
-	// 重渲染 Xray + mosdns 并重启关键服务
-	if err := services.RenderXrayConfig(bundle.Nodes, cfg.CurrentNodeID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 Xray 配置失败: "+err.Error()))
-		return
-	}
 	if bundle.DNS != nil {
-		if err := services.RenderMosdnsConfig(*bundle.DNS); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 mosdns 配置失败: "+err.Error()))
-			return
-		}
-		_ = exec.Command("systemctl", "restart", "rproxy-gw-mosdns").Run()
+		_ = services.RunCmdErr(services.CmdTimeoutLong, "systemctl", "restart", "rproxy-gw-mosdns")
 	}
 	_ = services.RestartXray()
 
@@ -215,4 +217,119 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		"wg_peers":   bundle.WGPeers != nil,
 		"ddns":       bundle.DDNS != nil,
 	})
+}
+
+// validateImportBundle 在写入任何文件之前完成全部校验与默认值填充
+func validateImportBundle(b *ClientConfigBundle) error {
+	// 先填默认值：1.7.0 及更早导出的节点可能没有 protocol 或仍是 vmess-ws
+	for i := range b.Nodes {
+		applyNodeDefaults(&b.Nodes[i])
+		if err := validateNode(&b.Nodes[i]); err != nil {
+			return fmt.Errorf("节点校验失败: %v", err)
+		}
+	}
+	wu := &b.WebUI
+	if wu.ListenPort < 1 || wu.ListenPort > 65535 {
+		return fmt.Errorf("listen_port 无效")
+	}
+	if wu.WGListenPort < 0 || wu.WGListenPort > 65535 || (wu.WGEnabled && wu.WGListenPort == 0) {
+		return fmt.Errorf("wg_listen_port 无效")
+	}
+	if wu.WGSubnet != "" {
+		if ip, _, err := net.ParseCIDR(wu.WGSubnet); err != nil || ip.To4() == nil {
+			return fmt.Errorf("wg_subnet 无效: %s", wu.WGSubnet)
+		}
+	}
+	if wu.UpdateHour < 0 || wu.UpdateHour > 23 {
+		return fmt.Errorf("update_hour 无效")
+	}
+	if wu.UpdateMinute < 0 || wu.UpdateMinute > 59 {
+		return fmt.Errorf("update_minute 无效")
+	}
+
+	// DDNS 配置整理成固定三条并校验（格式不对整体拒绝，避免写入一半）
+	if b.DDNS != nil {
+		n := config.NormalizeDDNS(*b.DDNS)
+		b.DDNS = &n
+		if err := validateDDNSConfig(b.DDNS); err != nil {
+			return fmt.Errorf("DDNS 配置校验失败: %v", err)
+		}
+	}
+
+	// current_node_id 指向不存在的节点时回退到 Order 最小的节点（与启动时规范化一致），并同步 Enabled
+	found := false
+	for _, n := range b.Nodes {
+		if n.ID == wu.CurrentNodeID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		wu.CurrentNodeID = ""
+		minIdx := -1
+		for i := range b.Nodes {
+			if minIdx == -1 || b.Nodes[i].Order < b.Nodes[minIdx].Order {
+				minIdx = i
+			}
+		}
+		if minIdx >= 0 {
+			wu.CurrentNodeID = b.Nodes[minIdx].ID
+		}
+	}
+	for i := range b.Nodes {
+		b.Nodes[i].Enabled = b.Nodes[i].ID == wu.CurrentNodeID
+	}
+	return nil
+}
+
+// fileSnapshot 导入前某个文件的状态
+type fileSnapshot struct {
+	existed bool
+	data    []byte
+	mode    os.FileMode
+}
+
+// snapshotFiles 记录各文件导入前的内容；读取失败（非"不存在"）的文件不纳入，避免误删
+func snapshotFiles(paths []string) map[string]fileSnapshot {
+	snap := make(map[string]fileSnapshot, len(paths))
+	for _, p := range paths {
+		st, err := os.Stat(p)
+		if os.IsNotExist(err) {
+			snap[p] = fileSnapshot{}
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		snap[p] = fileSnapshot{existed: true, data: b, mode: st.Mode().Perm()}
+	}
+	return snap
+}
+
+// restoreFiles 把文件恢复到快照时的状态：原本存在的写回原内容，原本不存在的删除
+func restoreFiles(snap map[string]fileSnapshot) {
+	for p, s := range snap {
+		if s.existed {
+			_ = config.WriteFileAtomic(p, s.data, s.mode)
+		} else {
+			_ = os.Remove(p)
+		}
+	}
+}
+
+// rerenderFromDisk 导入失败恢复 JSON 后，按恢复后的配置重新生成 Xray / mosdns 配置
+// （Xray 在写入前已按导入内容渲染过，mosdns 可能也已渲染）。wg0.conf 渲染是最后一步，失败时未写入，无需处理
+func rerenderFromDisk() {
+	if cfg, err := config.LoadWebUIConfig(); err == nil {
+		if nodes, err := config.LoadNodes(); err == nil {
+			_ = services.RenderXrayConfig(nodes, cfg.CurrentNodeID)
+		}
+	}
+	if u, err := config.LoadDNSUpstreams(); err == nil {
+		_ = services.RenderMosdnsConfig(u)
+	}
 }

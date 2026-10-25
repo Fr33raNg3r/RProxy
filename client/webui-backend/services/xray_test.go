@@ -123,3 +123,14 @@ func TestRoutingBlocksQUICBeforeProxy(t *testing.T) {
 		t.Fatalf("应有 udp/443 → block 规则且位于 proxy 规则之前，实际 %v", rules)
 	}
 }
+
+// access log 会为每条透明代理连接写一行，写盘量大、磨损 eMMC/SD 卡，默认关闭；error log 保留用于排障
+func TestXrayAccessLogDisabled(t *testing.T) {
+	logCfg := buildXrayBaseConfig()["log"].(map[string]interface{})
+	if logCfg["access"] != "none" {
+		t.Fatalf("access log 应为 none，实际 %v", logCfg["access"])
+	}
+	if logCfg["error"] != config.XrayErrorLogPath {
+		t.Fatalf("error log 应保留为 %s，实际 %v", config.XrayErrorLogPath, logCfg["error"])
+	}
+}

@@ -29,25 +29,6 @@ else
     LOCAL_MODE=0
 fi
 
-# ============================================================================
-# 清理 1.4.7 / 1.4.8 改名迁移留下的兼容软链接和迁移前备份包
-# ============================================================================
-cleanup_legacy_tproxy() {
-    # 1.5.0 起不再提供迁移：仍是未迁移的旧布局时拒绝升级，避免装出半新半旧的系统
-    if [[ -d /opt/tproxy-gw && ! -L /opt/tproxy-gw ]]; then
-        die "检测到未迁移的旧版安装（/opt/tproxy-gw），请先用 1.4.8 的脚本完成迁移后再升级：
-    bash <(curl -fsSL https://raw.githubusercontent.com/${REPO_SLUG}/v1.4.8/client/install.sh) upgrade 1.4.8"
-    fi
-    local p
-    for p in /opt/tproxy-gw /var/www/tproxy-gw; do
-        if [[ -L "$p" ]]; then rm -f "$p"; fi
-    done
-    rm -f /var/backups/tproxy-gw-pre-rproxy-*.tar.gz
-    # 旧定时器（Persistent=true）留下的 stamp 记录，以及旧版升级用过的临时构建目录
-    rm -f /var/lib/systemd/timers/stamp-tproxy-gw-*.timer
-    rm -rf /tmp/tproxy-build
-}
-
 # ---------- 主菜单 ----------
 show_menu() {
     while true; do
@@ -750,7 +731,6 @@ action_upgrade() {
     require_root
     check_arch
     check_debian13
-    cleanup_legacy_tproxy
 
     if ! is_installed; then
         log_error "未检测到已有安装，请先全新安装"

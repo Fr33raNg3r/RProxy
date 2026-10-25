@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ var (
 	versionMu        sync.RWMutex
 	cachedCurrentVer string
 	cachedLatestVer  string
+	cachedCheckErr   string // 最近一次检查失败的原因，成功后清空
 )
 
 const (
@@ -45,53 +47,62 @@ func InitVersionCheck() {
 	// 5 秒后异步拉远程
 	go func() {
 		time.Sleep(5 * time.Second)
-		v := fetchLatestClientRelease()
-		if v != "" {
-			versionMu.Lock()
-			cachedLatestVer = v
-			versionMu.Unlock()
-		}
+		refreshLatestCache()
 	}()
 }
 
-// fetchLatestClientRelease 查询 GitHub Releases API，返回最新的 client release 版本号
-// （已去掉 "client-v" 前缀）。失败返回空串。
-func fetchLatestClientRelease() string {
+// refreshLatestCache 拉一次最新版本并更新缓存：成功记下版本号并清除错误；
+// 失败只记录原因、保留上次拿到的版本号（升级按钮仍可用），由前端提示"检查失败"
+func refreshLatestCache() {
+	v, err := fetchLatestRelease(releasesURL)
+	versionMu.Lock()
+	defer versionMu.Unlock()
+	if err != nil {
+		cachedCheckErr = err.Error()
+		return
+	}
+	cachedLatestVer, cachedCheckErr = v, ""
+}
+
+// fetchLatestRelease 查询 GitHub Releases API，返回最新的 release 版本号（已去掉前缀），
+// 失败时返回给用户看的原因
+func fetchLatestRelease(url string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "GET", releasesURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	// 不带 token 的 API 调用有 60 次/小时/IP 速率限制，足以应对启动时的一次查询。
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("无法连接 GitHub（请检查本机代理是否正常）: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return ""
+		// 403 / 429 多为未登录 API 的频率限制（每小时 60 次）
+		return "", fmt.Errorf("GitHub 返回 HTTP %d", resp.StatusCode)
 	}
 	// 限制读取量，防御异常大响应
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("读取 GitHub 响应失败: %v", err)
 	}
 	var releases []struct {
 		TagName string `json:"tag_name"`
 	}
 	if err := json.Unmarshal(body, &releases); err != nil {
-		return ""
+		return "", fmt.Errorf("解析 GitHub 响应失败: %v", err)
 	}
 	// API 按发布时间倒序返回，取第一个匹配前缀的即可。
 	// 注意必须先严格校验是 vX.Y.Z 格式，否则 "v-anything" 也会被误识别。
 	for _, r := range releases {
 		if v := stripVersionPrefix(r.TagName); v != "" {
-			return v
+			return v, nil
 		}
 	}
-	return ""
+	return "", fmt.Errorf("未找到正式发布的版本")
 }
 
 // stripVersionPrefix 把 tag_name 校验并剥掉前缀，返回纯版本号 (e.g. "1.1.4")。
@@ -134,6 +145,7 @@ func GetVersion(w http.ResponseWriter, r *http.Request) {
 	versionMu.RLock()
 	cur := cachedCurrentVer
 	latest := cachedLatestVer
+	checkErr := cachedCheckErr
 	versionMu.RUnlock()
 
 	hasUpdate := false
@@ -150,18 +162,15 @@ func GetVersion(w http.ResponseWriter, r *http.Request) {
 		"current":    cur,
 		"latest":     displayLatest,
 		"has_update": hasUpdate,
+		// 非空表示最近一次检查失败，latest 是之前缓存的结果（可能为"未知"）
+		"check_error": checkErr,
 	})
 }
 
 // RefreshLatest POST /api/version/refresh
 // 手动重新拉取 GitHub 最新版本（不依赖启动时的一次性缓存）。
 func RefreshLatest(w http.ResponseWriter, r *http.Request) {
-	v := fetchLatestClientRelease()
-	if v != "" {
-		versionMu.Lock()
-		cachedLatestVer = v
-		versionMu.Unlock()
-	}
+	refreshLatestCache()
 	GetVersion(w, r)
 }
 

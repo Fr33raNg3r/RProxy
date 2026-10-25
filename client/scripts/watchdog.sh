@@ -10,7 +10,8 @@
 #   5. 状态写入 health.json 供 WebUI 读取
 # ============================================================================
 
-set -e
+# 不用 set -e：守护脚本里任何一步失败（如 systemctl restart 报错、webui.json 损坏导致 jq 失败）
+# 都不能中断后续的自愈检查和 state / health.json 的写入，否则计数错乱、WebUI 显示过期状态
 
 source /opt/rproxy-gw/scripts/common.sh
 
@@ -77,8 +78,10 @@ fi
 if [[ $proxy_ok -eq 0 && $xray_active -eq 1 && -n "$current_node" ]]; then
     if [[ $fail_count -ge 3 ]]; then
         if [[ $restart_count -lt 1 ]]; then
-            # 第一次：先重启 Xray
-            log_to_file "尝试重启 Xray"
+            # 第一次：先重新生成配置再重启 Xray
+            # 节点域名在生成配置时才预解析成 IP，VPS 换了 IP 后只重启会一直连旧 IP
+            log_to_file "尝试重新生成配置并重启 Xray"
+            "${BIN_DIR}/webui" render-xray >/dev/null 2>&1 || log_to_file "重新生成 Xray 配置失败，沿用旧配置重启"
             systemctl restart xray
             last_action="restart_xray"
             restart_count=$((restart_count + 1))
@@ -130,7 +133,8 @@ fi
 save_state
 
 # ---------- 写入 health.json ----------
-cat > "$HEALTH_FILE" <<EOF
+# 先写临时文件再 mv（同目录 rename 原子替换），WebUI 不会读到写了一半的 JSON
+cat > "${HEALTH_FILE}.tmp" <<EOF
 {
   "last_check": "${last_check_time}",
   "xray_active": ${xray_active},
@@ -143,3 +147,4 @@ cat > "$HEALTH_FILE" <<EOF
   "last_action": "${last_action}"
 }
 EOF
+mv -f "${HEALTH_FILE}.tmp" "$HEALTH_FILE"

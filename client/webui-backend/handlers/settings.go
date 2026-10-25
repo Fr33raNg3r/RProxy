@@ -237,7 +237,7 @@ func EmergencyResume(w http.ResponseWriter, r *http.Request) {
 }
 
 func runEmergencyScript(w http.ResponseWriter, path string) {
-	out, err := exec.Command(path).CombinedOutput()
+	out, err := services.RunCmdCombined(services.CmdTimeoutLong, path)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"ok":     false,
@@ -269,7 +269,7 @@ func RestartComponent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorMsg("不支持的服务名"))
 		return
 	}
-	if err := exec.Command("systemctl", "restart", svc).Run(); err != nil {
+	if err := services.RunCmdErr(services.CmdTimeoutLong, "systemctl", "restart", svc); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return
 	}
