@@ -166,13 +166,35 @@ func restartComponentByPath(w http.ResponseWriter, r *http.Request) {
 func staticHandler(next http.Handler) http.Handler {
 	compressed := chimw.Compress(5)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else {
-			w.Header().Set("Cache-Control", "no-cache")
-		}
-		compressed.ServeHTTP(w, r)
+		compressed.ServeHTTP(&cacheHeaderWriter{ResponseWriter: w, asset: strings.HasPrefix(r.URL.Path, "/assets/")}, r)
 	})
+}
+
+// cacheHeaderWriter 在写状态码时才决定缓存头：只有成功返回的 /assets/ 文件才长期缓存，
+// 404 等错误响应一律 no-cache，避免把错误结果缓存一年
+type cacheHeaderWriter struct {
+	http.ResponseWriter
+	asset bool
+	wrote bool
+}
+
+func (c *cacheHeaderWriter) WriteHeader(code int) {
+	if !c.wrote {
+		c.wrote = true
+		if c.asset && (code == http.StatusOK || code == http.StatusNotModified) {
+			c.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			c.Header().Set("Cache-Control", "no-cache")
+		}
+	}
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *cacheHeaderWriter) Write(b []byte) (int, error) {
+	if !c.wrote {
+		c.WriteHeader(http.StatusOK)
+	}
+	return c.ResponseWriter.Write(b)
 }
 
 // spaHandler: 返回静态文件，如果文件不存在则返回 index.html（SPA 路由）
@@ -191,6 +213,11 @@ func spaHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stat, err := os.Stat(full)
+	if (err != nil || stat.IsDir()) && strings.HasPrefix(path, "assets/") {
+		// 带哈希的构建产物不存在（多为升级后旧页面请求旧文件）：返回 404，不回退成 index.html
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil || stat.IsDir() {
 		// 不是文件或不存在，返回 index.html
 		http.ServeFile(w, r, filepath.Join(config.WWWDir, "index.html"))

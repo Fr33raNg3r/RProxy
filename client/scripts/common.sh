@@ -39,12 +39,19 @@ log_error() { echo -e "${RED}[错误]${NC} $*" >&2; }
 log_step()  { echo -e "${CYAN}[步骤]${NC} $*"; }
 log_done()  { echo -e "${GREEN}[完成]${NC} $*"; }
 
-# 同时打印到 stdout 和日志文件
+# 同时打印到 stdout 和日志文件：watchdog / 每日更新由 systemd 运行，stdout 进 journal，
+# WebUI 日志页的「健康检查」「每日更新」读的就是 journal
 log_to_file() {
     local logfile="${LOG_DIR}/$(date +%Y%m%d).log"
+    local line
+    line="[$(date '+%Y-%m-%d %H:%M:%S')] $*"
     mkdir -p "${LOG_DIR}"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${logfile}"
+    echo "$line" >> "${logfile}"
+    echo "$line"
 }
+
+# 紧急停止标记：放在 /run（tmpfs），重启机器自动清除，开机后恢复正常模式
+readonly EMERGENCY_FLAG="/run/rproxy-gw-emergency-stop"
 
 # ---------- 错误处理 ----------
 die() {

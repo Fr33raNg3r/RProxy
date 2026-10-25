@@ -49,7 +49,7 @@ func CreateNode(w http.ResponseWriter, r *http.Request) {
 
 	// 生成 ID 和 Order
 	n.ID = services.GenerateID()
-	n.Order = len(nodes)
+	n.Order = nextNodeOrder(nodes)
 	applyNodeDefaults(&n)
 	// Enabled 由 CurrentNodeID 同步管理，新建节点默认不启用
 	n.Enabled = false
@@ -326,6 +326,17 @@ func ReorderNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // ----------------- 工具 -----------------
+
+// nextNodeOrder 新节点排在最后：取现有最大 Order + 1（删过节点后 Order 不连续，用节点数会撞号）
+func nextNodeOrder(nodes []config.Node) int {
+	next := 0
+	for _, n := range nodes {
+		if n.Order >= next {
+			next = n.Order + 1
+		}
+	}
+	return next
+}
 
 // applyNodeDefaults 给新建/编辑/导入的节点填充默认值
 func applyNodeDefaults(n *config.Node) {

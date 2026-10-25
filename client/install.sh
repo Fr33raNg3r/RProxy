@@ -325,7 +325,7 @@ fetch_source() {
     local url="https://github.com/${REPO_SLUG}/releases/download/${tag}/${asset}"
 
     log_info "下载预编译产物：${url}"
-    if ! curl -fsSL "$url" | tar xz -C "${BUILD_DIR}"; then
+    if ! curl -fsSL --max-time 300 "$url" | tar xz -C "${BUILD_DIR}"; then
         die "预编译产物下载失败: ${url}
 （若该 tag 是从旧版 install.sh 创建的、不含预编译产物，请改用更新的 tag）"
     fi
@@ -337,7 +337,7 @@ install_xray() {
     log_step "通过官方一键脚本安装 Xray-core"
     # --without-logfiles：官方脚本会把 /var/log/xray 改成 xray:xray 700，
     # 而本项目以 root 运行且无 CAP_DAC_OVERRIDE，会因此打不开 log 起不来；日志目录由 ensure_xray_log_dir 自行管理
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles
+    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles
     ensure_xray_log_dir
 
     # 关键修复：让 Xray 以 root 运行
@@ -405,14 +405,14 @@ install_mosdns() {
     cd "$tmp_dir"
     # 获取最新版下载链接
     local download_url
-    download_url=$(curl -fsSL https://api.github.com/repos/IrineSistiana/mosdns/releases/latest \
+    download_url=$(curl -fsSL --max-time 30 https://api.github.com/repos/IrineSistiana/mosdns/releases/latest \
         | jq -r ".assets[] | select(.name | endswith(\"linux-${arch}.zip\")) | .browser_download_url" \
         | head -n 1)
     if [[ -z "$download_url" ]]; then
         die "无法获取 mosdns 下载链接"
     fi
     log_info "下载：${download_url}"
-    curl -fL -o mosdns.zip "$download_url"
+    curl -fL --max-time 120 -o mosdns.zip "$download_url"
     unzip -o mosdns.zip
     install -m 0755 mosdns "${BIN_DIR}/mosdns"
     cd /
@@ -736,6 +736,11 @@ action_upgrade() {
         log_error "未检测到已有安装，请先全新安装"
         exit 1
     fi
+    # 紧急停止期间升级会重新加载规则、重启服务，相当于半恢复；先恢复再升级
+    # （路径写死：WebUI 触发的升级 source 的是本机旧版 common.sh，没有 EMERGENCY_FLAG）
+    if [[ -f /run/rproxy-gw-emergency-stop ]]; then
+        die "当前处于紧急停止状态，请先在 WebUI 点「紧急恢复」（或执行 ${SCRIPTS_DIR}/emergency-resume.sh）后再升级"
+    fi
 
     # 升级时也确保 NTP 启用（旧版安装可能未开启）
     enable_ntp
@@ -830,7 +835,7 @@ action_upgrade() {
     if [[ "${RPROXY_AUTO_UPGRADE:-}" == "1" && -f /var/lib/rproxy-gw/no-xray-auto-update ]]; then
         log_info "Xray 自动更新已关闭，本次自动升级跳过 Xray"
     else
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles || true
+        bash -c "$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles || true
     fi
     ensure_xray_log_dir
     # 重写 Xray override.conf（关键：修复 NoNewPrivileges 等配置）
@@ -890,6 +895,10 @@ action_upgrade() {
     sleep 2
     restart_service xray
     restart_service rproxy-gw-webui
+    # 1.8.3 及更早关闭 WG 时只 stop 不 disable，重启机器后 WG 会自己起来：按配置补上 disable（不打断当前运行）
+    if [[ "$(jq -r '.wg_enabled // false' "${CONFIG_DIR}/webui.json" 2>/dev/null)" == "false" ]]; then
+        systemctl disable wg-quick@wg0 2>/dev/null || true
+    fi
     # 上面 render-wg 重新生成了 wg0.conf，运行中的 WG 需重启才会用上（客户端会自动重连）；未启用则不动
     if systemctl is-active --quiet wg-quick@wg0; then
         systemctl restart wg-quick@wg0 || log_warn "WireGuard 重启失败，请在 WebUI 中检查"
@@ -939,7 +948,7 @@ do_uninstall_silent() {
     nft flush ruleset 2>/dev/null || true
 
     log_step "卸载 Xray"
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
 
     log_step "删除文件"
     rm -rf "${INSTALL_DIR}" "${WWW_DIR}" "${XRAY_CONFIG_DIR}" \

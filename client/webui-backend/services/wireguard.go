@@ -167,8 +167,9 @@ func RestartWG() error {
 	return RunCmdErr(CmdTimeoutLong, "systemctl", "enable", "wg-quick@wg0")
 }
 
+// StopWG 停止并取消开机自启：RestartWG 会 enable，只 stop 的话重启机器后 WG 又会自己起来
 func StopWG() error {
-	return RunCmdErr(CmdTimeoutLong, "systemctl", "stop", "wg-quick@wg0")
+	return RunCmdErr(CmdTimeoutLong, "systemctl", "disable", "--now", "wg-quick@wg0")
 }
 
 // ----------------- 流量统计 -----------------

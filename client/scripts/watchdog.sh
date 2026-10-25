@@ -44,6 +44,10 @@ EOF
 # ---------- 健康检查 ----------
 load_state
 
+# 紧急停止期间不做任何自愈（否则会把刚停掉的服务又拉起来），只更新 health.json
+emergency=0
+[[ -f "$EMERGENCY_FLAG" ]] && emergency=1
+
 xray_active=0
 mosdns_active=0
 webui_active=0
@@ -61,9 +65,28 @@ if [[ -f "${CONFIG_DIR}/webui.json" ]]; then
     current_node=$(jq -r '.current_node_id // ""' "${CONFIG_DIR}/webui.json")
 fi
 
+# ---------- Xray 未运行 ----------
+# 下面的探测与故障转移都要求 Xray 在运行；Xray 因配置错误退出时 systemd 不会自动重启（退出码 23），
+# 这里先直接重启，仍起不来再重新生成配置后重启
+if [[ $emergency -eq 0 && $xray_active -eq 0 ]]; then
+    log_to_file "Xray 未运行，尝试重启"
+    systemctl reset-failed xray 2>/dev/null || true
+    systemctl restart xray || true
+    sleep 2
+    if ! is_service_active xray; then
+        log_to_file "Xray 重启后仍未运行，重新生成配置后再试"
+        "${BIN_DIR}/webui" render-xray >/dev/null 2>&1 || log_to_file "重新生成 Xray 配置失败"
+        systemctl reset-failed xray 2>/dev/null || true
+        systemctl restart xray || true
+        sleep 2
+    fi
+    is_service_active xray && xray_active=1
+    last_action="restart_xray"
+fi
+
 # ---------- 探测代理 ----------
 # 仅在 Xray 运行中且有当前节点时探测
-if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
+if [[ $emergency -eq 0 && $xray_active -eq 1 && -n "$current_node" ]]; then
     if proxy_health_check 10808; then
         proxy_ok=1
         fail_count=0
@@ -75,7 +98,7 @@ if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
 fi
 
 # ---------- 故障转移 ----------
-if [[ $proxy_ok -eq 0 && $xray_active -eq 1 && -n "$current_node" ]]; then
+if [[ $emergency -eq 0 && $proxy_ok -eq 0 && $xray_active -eq 1 && -n "$current_node" ]]; then
     if [[ $fail_count -ge 3 ]]; then
         if [[ $restart_count -lt 1 ]]; then
             # 第一次：先重新生成配置再重启 Xray
@@ -104,6 +127,9 @@ if [[ $proxy_ok -eq 1 ]]; then
     "${BIN_DIR}/webui" failback-check 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" || true
 fi
 
+if [[ $emergency -eq 1 ]]; then
+    last_action="emergency_stop"
+else
 # ---------- 重启失活的辅助组件 ----------
 if [[ $mosdns_active -eq 0 ]]; then
     log_to_file "mosdns 未运行，尝试重启"
@@ -128,6 +154,15 @@ if nft list set inet tp cn_ips >/dev/null 2>&1 && \
    [[ $(nft list set inet tp cn_ips | grep -oE '[0-9]+(\.[0-9]+){3}(/[0-9]+|-[0-9.]+)?' | wc -l) -lt 100 ]]; then
     log_to_file "cn_ips 集合几乎为空，尝试重新加载国内 IP"
     systemctl restart rproxy-gw-load-cn-ips || true
+fi
+
+# 本机 DNS 应指向 mosdns：紧急停止会改成公共 DNS，之后重启机器（标记随之清除）不会自动改回
+if is_service_active rproxy-gw-mosdns && ! grep -q '^nameserver 127\.0\.0\.1' /etc/resolv.conf 2>/dev/null; then
+    log_to_file "resolv.conf 未指向本机 mosdns，恢复"
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    printf '# Managed by RProxy - DNS handled by mosdns on 127.0.0.1:53\nnameserver 127.0.0.1\n' > /etc/resolv.conf
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+fi
 fi
 
 save_state

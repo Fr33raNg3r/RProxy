@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -63,5 +67,43 @@ func TestGetVersionReportsCheckError(t *testing.T) {
 	}
 	if resp["check_error"] != "连接超时" {
 		t.Fatalf("check_error = %v", resp["check_error"])
+	}
+}
+
+// 一键升级的外层脚本：无论下载 install.sh 失败，还是 install.sh 没写标志就失败退出，
+// 日志里都必须出现"升级完成（"，否则前端一直显示"升级中"；install.sh 自己写过标志时不重复写
+func TestUpgradeShellScriptAlwaysWritesMarker(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("没有 bash")
+	}
+	cases := []struct {
+		name, fakeInstall string
+		downloadOK        bool
+		wantMarkers       int
+		wantText          string
+	}{
+		{"下载失败", "", false, 1, "下载升级脚本失败"},
+		{"打快照前失败", "echo 预编译产物下载失败; exit 1", true, 1, "升级失败，退出码 1"},
+		{"已自动回滚", "echo '" + upgradeDoneMarker + "结果：已自动回滚）'; exit 1", true, 1, "已自动回滚"},
+		{"成功", "echo '" + upgradeDoneMarker + "1.8.3 → 1.8.4）'", true, 1, "1.8.4"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := filepath.ToSlash(t.TempDir())
+			os.MkdirAll(dir+"/opt/logs", 0755)
+			src := dir + "/fake_install.sh"
+			os.WriteFile(src, []byte("#!/bin/bash\n"+c.fakeInstall+"\n"), 0755)
+			s := strings.ReplaceAll(upgradeShellScript, "/opt/rproxy-gw", dir+"/opt")
+			fetch := "false"
+			if c.downloadOK {
+				fetch = "cp " + src + " " + dir + "/opt/install.sh.new"
+			}
+			s = regexp.MustCompile(`curl -fsSL --max-time 60 \S+ -o \S+`).ReplaceAllString(s, fetch)
+			_ = exec.Command("bash", "-c", s).Run()
+			b, _ := os.ReadFile(dir + "/opt/logs/upgrade.log")
+			if n := strings.Count(string(b), upgradeDoneMarker); n != c.wantMarkers || !strings.Contains(string(b), c.wantText) {
+				t.Fatalf("完成标志 %d 处（应为 %d），日志：\n%s", n, c.wantMarkers, b)
+			}
+		})
 	}
 }

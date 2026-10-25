@@ -221,8 +221,31 @@ cmd_change_domain() {
     # 也可能需要重新生成完整 nginx 配置（更稳）
     deploy_final_nginx_inplace
 
+    # 旧域名的续期还在 acme.sh 里，且同样安装到 server.crt：续期成功时会用旧域名证书覆盖新证书
+    _remove_stale_acme_domains "${new_domain}"
+
     log_done "域名已切换到 ${new_domain}"
     log_warn "请用新的域名更新所有客户端配置！"
+}
+
+# 撤销其他域名写到本机证书路径（${SSL_DIR}/server.crt）的自动续期，只保留 <当前域名>。
+# acme.sh 的 --remove 只停止续期、不删证书文件；安装到别的路径的证书（本机其他站点）不受影响
+_remove_stale_acme_domains() {
+    local current="$1" conf d path
+    [[ -n "$current" && -d "${ACME_HOME}" ]] || return 0
+    for conf in "${ACME_HOME}"/*/*.conf; do
+        [[ -f "$conf" && "$conf" != *.csr.conf ]] || continue
+        # 新版 acme.sh 写成 Key='value'，旧版不带引号
+        d=$(sed -n "s/^Le_Domain=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}\$/\1/p" "$conf" | head -n 1)
+        path=$(sed -n "s/^Le_RealFullChainPath=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}\$/\1/p" "$conf" | head -n 1)
+        [[ -n "$d" && "$d" != "$current" && "$path" == "${SSL_DIR}/server.crt" ]] || continue
+        log_info "撤销旧域名 ${d} 的证书自动续期（避免覆盖当前域名 ${current} 的证书）"
+        if [[ "$(dirname "$conf")" == *_ecc ]]; then
+            "${ACME_HOME}/acme.sh" --remove -d "$d" --ecc || log_warn "撤销 ${d} 失败"
+        else
+            "${ACME_HOME}/acme.sh" --remove -d "$d" || log_warn "撤销 ${d} 失败"
+        fi
+    done
 }
 
 # 工具：用源码模板重新渲染 nginx
@@ -606,6 +629,7 @@ main() {
         uninstall)      cmd_uninstall ;;
         help|-h|--help) cmd_help ;;
         _render-xray)   _render_xray ;;       # 内部使用
+        _acme-cleanup)  require_installed; _remove_stale_acme_domains "$(json_get "${SERVER_CFG}" '.domain')" ;;  # 内部使用（升级时调用）
         "")             show_menu ;;
         *)              log_error "未知命令：$1"; cmd_help; exit 1 ;;
     esac

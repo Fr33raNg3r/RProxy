@@ -3,9 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
@@ -138,6 +142,40 @@ func DisableWireGuard(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const errNoEndpoint = "未设置公网 Endpoint，自动获取公网 IP 也失败了，请先在本页设置 Endpoint（公网 IP 或 DDNS 域名）"
+
+// validatePeerName 名称会写进 wg0.conf 的注释行，不允许换行等控制字符（否则能另起一行注入 PostUp 等配置项）
+func validatePeerName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("名称不能为空")
+	}
+	if utf8.RuneCountInString(name) > 64 {
+		return fmt.Errorf("名称不能超过 64 个字符")
+	}
+	for _, c := range name {
+		if unicode.IsControl(c) {
+			return fmt.Errorf("名称不能包含换行、制表符等控制字符")
+		}
+	}
+	return nil
+}
+
+// pickEndpoint 客户端配置里的 Endpoint：URL 参数 > 已保存的 wg_endpoint > 公网 IP，都没有返回空串
+func pickEndpoint(query, saved string, wanIP func() string) string {
+	if query != "" {
+		return query
+	}
+	if saved != "" {
+		return saved
+	}
+	return wanIP()
+}
+
+// peerConfigDisposition 下载头：文件名按 RFC 2231 编码，中文名不会乱码
+func peerConfigDisposition(name string) string {
+	return mime.FormatMediaType("attachment", map[string]string{"filename": name + ".conf"})
+}
+
 // 列表中不返回客户端私钥（仅生成二维码时使用）
 func sanitizePeers(peers []config.WGPeer) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(peers))
@@ -162,8 +200,8 @@ func CreatePeer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorMsg("请求体格式错误"))
 		return
 	}
-	if req.Name == "" {
-		writeJSON(w, http.StatusBadRequest, errorMsg("名称不能为空"))
+	if err := validatePeerName(req.Name); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
 		return
 	}
 	cfg, err := config.LoadWebUIConfig()
@@ -273,12 +311,10 @@ func PeerQRCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Endpoint 来源优先级：URL 参数 > 已保存的 wg_endpoint > 自动探测公网 IP
-	endpoint := r.URL.Query().Get("endpoint")
+	endpoint := pickEndpoint(r.URL.Query().Get("endpoint"), cfg.WGEndpoint, services.GetWANIP)
 	if endpoint == "" {
-		endpoint = cfg.WGEndpoint
-	}
-	if endpoint == "" {
-		endpoint = services.GetExternalIP()
+		writeJSON(w, http.StatusBadRequest, errorMsg(errNoEndpoint))
+		return
 	}
 
 	clientCfg, err := services.BuildClientConfig(cfg, *target, endpoint)
@@ -321,12 +357,10 @@ func PeerConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorMsg("peer 不存在"))
 		return
 	}
-	endpoint := r.URL.Query().Get("endpoint")
+	endpoint := pickEndpoint(r.URL.Query().Get("endpoint"), cfg.WGEndpoint, services.GetWANIP)
 	if endpoint == "" {
-		endpoint = cfg.WGEndpoint
-	}
-	if endpoint == "" {
-		endpoint = services.GetExternalIP()
+		writeJSON(w, http.StatusBadRequest, errorMsg(errNoEndpoint))
+		return
 	}
 	clientCfg, err := services.BuildClientConfig(cfg, *target, endpoint)
 	if err != nil {
@@ -334,7 +368,7 @@ func PeerConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+target.Name+`.conf"`)
+	w.Header().Set("Content-Disposition", peerConfigDisposition(target.Name))
 	_, _ = w.Write([]byte(clientCfg))
 }
 

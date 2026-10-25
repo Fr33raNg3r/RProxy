@@ -8,15 +8,14 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
 )
 
-// xrayTmpConfPath 是写入后先交给 xray -test 校验的临时文件。
+// xrayTmpConfPattern 是先交给 xray -test 校验的临时文件名模式（* 处随机，WebUI 与 watchdog 同时渲染也不会互相覆盖）。
 // 必须以 .json 结尾：Xray v26.10.21 起按扩展名识别格式，.tmp 会被直接拒绝（-format=json 也无效）。
-var xrayTmpConfPath = config.XrayConfDir + "/config.tmp.json"
+const xrayTmpConfPattern = "config.*.tmp.json"
 
 // RenderXrayConfig 根据节点池和当前节点 ID 生成 Xray 配置文件
 // 如果 currentNodeID 为空，生成一个最小可用配置（无代理出站）
@@ -50,13 +49,22 @@ func RenderXrayConfig(nodes []config.Node, currentNodeID string) error {
 		return err
 	}
 
-	tmp := xrayTmpConfPath
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(tmp, b, 0644); err != nil {
+	f, err := os.CreateTemp(config.XrayConfDir, xrayTmpConfPattern)
+	if err != nil {
 		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(b)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(tmp)
+		return werr
 	}
 
 	// 验证配置语法（用 -format=json 显式指定）
@@ -187,37 +195,62 @@ func buildProxyOutbound(n *config.Node) map[string]interface{} {
 	}
 }
 
-// resolveAddress 把域名解析为 IPv4 地址
-// 如果输入已经是 IP 或解析失败，返回原值
-// 用于在 Xray 配置生成时预解析 VPS 域名，避免运行时依赖 mosdns
-func resolveAddress(addr string) string {
-	// 如果已经是 IPv4，直接返回
-	if net.ParseIP(addr) != nil {
-		return addr
-	}
-	// 用国内 DNS 直接解析（不走系统 resolv.conf，避免循环依赖）
-	// 用一个 Resolver 显式指定上游
+// resolveCachePath 记录每个节点域名上次成功解析出的 IP（{"域名":"IP"}），解析失败时沿用
+var resolveCachePath = config.InstallDir + "/data/resolve-cache.json"
+
+// 预解析用的国内 DNS（在 nftables cn_ips 预置里，直连，不需要走代理）
+var resolveDNSServers = []string{"223.5.5.5:53", "119.29.29.29:53"}
+
+// lookupIPv4 通过指定 DNS 解析域名，返回第一个 IPv4，失败返回空串（测试中可替换）
+var lookupIPv4 = func(dnsServer, host string) string {
 	r := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{Timeout: 5 * time.Second}
-			return d.DialContext(ctx, "udp", "223.5.5.5:53") // 阿里 DNS（不需要走代理）
+			return d.DialContext(ctx, "udp", dnsServer)
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	ips, err := r.LookupHost(ctx, addr)
-	if err != nil || len(ips) == 0 {
-		// 解析失败：保留域名让 Xray 自己尝试（旧行为）
-		return addr
+	ips, err := r.LookupHost(ctx, host)
+	if err != nil {
+		return ""
 	}
-	// 优先返回 IPv4
 	for _, ip := range ips {
-		if net.ParseIP(ip) != nil && !strings.Contains(ip, ":") {
+		if p := net.ParseIP(ip); p != nil && p.To4() != nil {
 			return ip
 		}
 	}
-	return ips[0]
+	return ""
+}
+
+// resolveAddress 把节点域名解析为 IPv4，用于在生成 Xray 配置时预解析 VPS 域名，避免运行时依赖 mosdns。
+// 依次尝试各国内 DNS（不走系统 resolv.conf，避免循环依赖）；都失败时沿用上次成功解析的 IP：
+// 解析失败多发生在网络异常时，若把域名写进配置，Xray 只能经 mosdns → 国外 DoH → 代理自身去解析，形成循环。
+// 从未解析成功过的域名只能原样返回，交给 Xray 自己尝试。
+func resolveAddress(addr string) string {
+	if net.ParseIP(addr) != nil {
+		return addr
+	}
+	cache := map[string]string{}
+	if b, err := os.ReadFile(resolveCachePath); err == nil {
+		_ = json.Unmarshal(b, &cache)
+	}
+	for _, dns := range resolveDNSServers {
+		if ip := lookupIPv4(dns, addr); ip != "" {
+			if cache[addr] != ip {
+				cache[addr] = ip
+				if b, err := json.Marshal(cache); err == nil {
+					_ = config.WriteFileAtomic(resolveCachePath, b, 0644)
+				}
+			}
+			return ip
+		}
+	}
+	if ip := cache[addr]; ip != "" {
+		return ip
+	}
+	return addr
 }
 
 // 路由规则（v1.1.1 起简化）：

@@ -25,6 +25,8 @@ echo "[恢复] 重置 resolv.conf 指向本机 mosdns..."
 chattr -i /etc/resolv.conf 2>/dev/null || true
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
+rm -f /run/rproxy-gw-emergency-stop
+
 echo ""
 echo "✅ 透明代理已恢复。"
 echo ""

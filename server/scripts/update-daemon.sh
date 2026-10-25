@@ -104,7 +104,8 @@ update_xray() {
     fi
     log_to_file "Xray ${cur} → ${latest}，已创建快照 ${snap}"
 
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
+    # curl 必须带超时：连接僵住时本服务（oneshot）会一直不结束，之后每天的定时器都无法再触发
+    bash -c "$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install \
         >>"$logf" 2>&1 || log_to_file "Xray 安装脚本返回失败"
 
     local new

@@ -137,7 +137,8 @@
         <span v-if="!endpoint" style="color: #fbbf24;">— 建议先在主页面设置一个稳定的 Endpoint</span>
       </div>
       <div style="text-align: center; margin: 16px 0;">
-        <img :src="qrUrl" alt="QR Code" style="max-width: 320px; border-radius: 6px; background: white; padding: 12px;" />
+        <!-- 取不到 Endpoint 时接口返回错误信息而不是图片，只显示下方的错误提示 -->
+        <img v-if="!cfgError" :src="qrUrl" alt="QR Code" style="max-width: 320px; border-radius: 6px; background: white; padding: 12px;" />
       </div>
       <div class="text-muted text-sm" style="text-align: center; margin-bottom: 12px;">扫码导入到 WireGuard 客户端</div>
       <div class="text-muted text-sm" style="margin-bottom: 6px;">配置文件内容：</div>
@@ -207,7 +208,12 @@ async function loadConfigText(peer) {
       location.href = '/login'
       return
     }
-    if (!resp.ok) throw new Error(await resp.text() || '加载失败')
+    if (!resp.ok) {
+      const text = await resp.text()
+      let msg = text
+      try { msg = JSON.parse(text).error || text } catch {}
+      throw new Error(msg || '加载失败')
+    }
     cfgText.value = await resp.text()
   } catch (e) {
     cfgError.value = e.message || '加载失败'

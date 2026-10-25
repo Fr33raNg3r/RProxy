@@ -41,3 +41,15 @@ func TestStaticHandlerGzip(t *testing.T) {
 		t.Fatalf("浏览器支持 gzip 时 JS 应压缩返回，实际 Content-Encoding=%q", got)
 	}
 }
+
+// 升级后旧页面请求已不存在的带哈希资源：应返回 404，不能回退成 index.html 又被打上一年的 immutable 缓存
+func TestStaticHandlerMissingAssetIs404(t *testing.T) {
+	rec := httptest.NewRecorder()
+	staticHandler(http.HandlerFunc(spaHandler)).ServeHTTP(rec, httptest.NewRequest("GET", "/assets/gone-abc123.js", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("缺失的 /assets/ 文件应返回 404，实际 %d", rec.Code)
+	}
+	if cc := rec.Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
+		t.Fatalf("404 不应带 immutable 缓存头，实际 %q", cc)
+	}
+}

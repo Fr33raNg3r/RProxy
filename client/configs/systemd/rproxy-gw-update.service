@@ -5,4 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# oneshot 默认没有启动超时：某个下载卡死时本次更新永远不结束，之后每天的定时器都无法再触发
+TimeoutStartSec=2h
 ExecStart=/opt/rproxy-gw/scripts/update-daemon.sh

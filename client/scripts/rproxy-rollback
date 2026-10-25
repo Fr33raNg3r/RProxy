@@ -215,6 +215,8 @@ cmd_restore() {
         systemctl restart wg-quick@wg0 || true
     fi
     systemctl start rproxy-gw-watchdog.timer rproxy-gw-update.timer 2>/dev/null || true
+    # 上面已重新加载规则、重启全部服务，紧急停止状态（若有）随之结束
+    rm -f "${ROOT}/run/rproxy-gw-emergency-stop"
 
     # 记录问题版本：自动更新会跳过它，直到发布了更新的版本
     mkdir -p "${STATE_DIR}"

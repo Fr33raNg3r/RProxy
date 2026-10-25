@@ -36,3 +36,14 @@ func TestApplyNodeDefaultsForcesXHTTP(t *testing.T) {
 		}
 	}
 }
+
+// 删过节点后 Order 不连续（如剩 1、2），新节点若取"节点数"会与已有节点重复，排序与故障转移顺序随之不确定
+func TestNextNodeOrder(t *testing.T) {
+	if got := nextNodeOrder(nil); got != 0 {
+		t.Fatalf("没有节点时应为 0，实际 %d", got)
+	}
+	nodes := []config.Node{{ID: "a", Order: 1}, {ID: "b", Order: 2}}
+	if got := nextNodeOrder(nodes); got != 3 {
+		t.Fatalf("应排在最大 Order 之后（3），实际 %d", got)
+	}
+}

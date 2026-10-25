@@ -75,7 +75,9 @@ cmd_check() {
     [[ -n "$domain" && -n "$path" ]] || { err "自检：server.json 缺少 domain 或 ws_path"; return 1; }
     code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
                --resolve "${domain}:443:127.0.0.1" "https://${domain}/" 2>/dev/null)
-    [[ "$code" == "200" ]] || { err "自检：首页返回 ${code:-无响应}（应为 200）"; return 1; }
+    # 只要 Nginx 能完成 TLS 并返回 HTTP 响应即可：自定义站点首页可能是 404 / 跳转 / 403，
+    # 要求 200 会让这类站点的升级与 Xray 自动更新永远判为"自检未通过"、失去回滚保护；5xx 与无响应才算异常
+    [[ "$code" =~ ^[234][0-9][0-9]$ ]] || { err "自检：首页返回 ${code:-无响应}（应为 2xx/3xx/4xx）"; return 1; }
     if [[ $want_xhttp -eq 1 ]]; then
         code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
                    --resolve "${domain}:443:127.0.0.1" "https://${domain}${path}/" 2>/dev/null)

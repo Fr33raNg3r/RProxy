@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Fr33raNg3r/RProxy/client/webui-backend/config"
@@ -154,6 +155,7 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		fail(err.Error())
 		return
 	}
+	oldListenPort, oldWGPort := cfg.ListenPort, cfg.WGListenPort
 	cfg.ListenPort = bundle.WebUI.ListenPort
 	cfg.UpdateHour = bundle.WebUI.UpdateHour
 	cfg.UpdateMinute = bundle.WebUI.UpdateMinute
@@ -198,9 +200,21 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 全部写入、渲染成功后再重启服务
+	// 全部写入、渲染成功后再让各项生效（与设置页保存时的处理一致）
+	var warnings []string
 	if cfg.WGEnabled {
 		_ = services.RestartWG()
+	} else {
+		_ = services.StopWG()
+	}
+	// WG 端口变了要同步 nftables 放行规则，否则 WG 响应包被 TPROXY 劫持、客户端握手失败
+	if cfg.WGListenPort != oldWGPort && cfg.WGListenPort > 0 {
+		if err := services.SyncWGPortToNftables(cfg.WGListenPort); err != nil {
+			warnings = append(warnings, "同步 nftables WG 端口失败: "+err.Error())
+		}
+	}
+	if err := services.WriteUpdateTimer(cfg.UpdateHour, cfg.UpdateMinute); err != nil {
+		warnings = append(warnings, "更新每日自动更新时间失败: "+err.Error())
 	}
 	if bundle.DDNS != nil {
 		go services.RunDDNSNow()
@@ -210,13 +224,21 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = services.RestartXray()
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"ok":         true,
 		"node_count": len(bundle.Nodes),
 		"dns":        bundle.DNS != nil,
 		"wg_peers":   bundle.WGPeers != nil,
 		"ddns":       bundle.DDNS != nil,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warning"] = strings.Join(warnings, "；")
+	}
+	if cfg.ListenPort != oldListenPort {
+		resp["webui_will_restart"] = true
+		restartWebUIAsync()
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // validateImportBundle 在写入任何文件之前完成全部校验与默认值填充
@@ -226,6 +248,11 @@ func validateImportBundle(b *ClientConfigBundle) error {
 		applyNodeDefaults(&b.Nodes[i])
 		if err := validateNode(&b.Nodes[i]); err != nil {
 			return fmt.Errorf("节点校验失败: %v", err)
+		}
+	}
+	for _, p := range b.WGPeers {
+		if err := validatePeerName(p.Name); err != nil {
+			return fmt.Errorf("WireGuard peer %q 校验失败: %v", p.Name, err)
 		}
 	}
 	wu := &b.WebUI

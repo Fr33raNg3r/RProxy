@@ -526,6 +526,16 @@ func GetDDNSStatus() DDNSStatus {
 	return s
 }
 
+// GetWANIP 返回家庭宽带的公网 IPv4（WG 客户端 Endpoint 的默认值），取不到返回空串：
+// 优先用 DDNS 最近一次取到的，没有再现查（查询接口都是国内站点，直连，不会取到 VPS 的 IP）
+func GetWANIP() string {
+	if ip := GetDDNSStatus().WANIP; ip != "" {
+		return ip
+	}
+	ip, _ := fetchWANIP(wanIPURLs)
+	return ip
+}
+
 // RunDDNSNow 立即执行一轮：取 IP → 同步记录
 func RunDDNSNow() {
 	ddnsRunMu.Lock()

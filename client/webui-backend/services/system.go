@@ -119,17 +119,3 @@ func TailFile(path string, lines int) (string, error) {
 	}
 	return strings.Join(rows, "\n"), nil
 }
-
-// GetExternalIP 取本机外网 IP（用于 WG 客户端 endpoint）
-// 优先返回第一个非环回 IP；找不到则返回空字符串
-func GetExternalIP() string {
-	out, err := RunCmd(CmdTimeoutShort, "hostname", "-I")
-	if err != nil {
-		return ""
-	}
-	ips := strings.Fields(string(out))
-	for _, ip := range ips {
-		return ip
-	}
-	return ""
-}

@@ -17,6 +17,12 @@ LOCK_FILE="/var/run/rproxy-gw-update.lock"
 exec 200>"$LOCK_FILE" || die "无法创建锁文件"
 flock -n 200 || { log_warn "已有更新任务在运行，本次跳过"; exit 0; }
 
+# 紧急停止期间不做任何更新（升级、重启服务都会把透明代理部分恢复，状态混乱）
+if [[ -f "$EMERGENCY_FLAG" ]]; then
+    log_to_file "紧急停止中，跳过本次每日更新"
+    exit 0
+fi
+
 log_to_file "================ 开始每日更新 ================"
 
 # ---------- 1. 检查脚本自身版本 ----------
@@ -107,7 +113,8 @@ update_xray() {
     log_to_file "Xray ${cur} → ${latest}，已创建快照 ${snap}"
 
     # --without-logfiles：不让官方脚本把 /var/log/xray 改成 xray:xray 700（root 无 CAP_DAC_OVERRIDE 会打不开 log）
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
+    # curl 必须带超时：连接僵住时本服务（oneshot）会一直不结束，之后每天的定时器都无法再触发
+    bash -c "$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles \
         >>"$logf" 2>&1 || log_to_file "Xray 安装脚本返回失败"
 
     local new
@@ -159,34 +166,63 @@ update_geo_data() {
         "geoip-cn.txt=https://raw.githubusercontent.com/Loyalsoldier/geoip/release/text/cn.txt"
     )
 
-    local all_ok=1
+    # 先全部下载到临时目录并校验，全部合格才替换：下载到错误内容（如被劫持返回的网页）时
+    # 换上去的 geoip.dat 会让 Xray 起不来（路由用到 geoip:private），而这一步没有快照保护
+    local tmp_dir all_ok=1
+    tmp_dir=$(mktemp -d)
     for entry in "${urls[@]}"; do
         local fname="${entry%%=*}"
         local url="${entry#*=}"
-        local tmp
-        tmp=$(mktemp)
-        if curl -fsSL --max-time 60 -o "$tmp" "$url"; then
-            mv "$tmp" "${geo_dir}/${fname}"
-        else
+        if ! curl -fsSL --max-time 60 -o "${tmp_dir}/${fname}" "$url"; then
             log_to_file "下载失败: ${fname}"
-            rm -f "$tmp"
+            all_ok=0
+        elif ! geo_file_valid "${tmp_dir}/${fname}"; then
+            log_to_file "内容校验未通过: ${fname}（大小 $(stat -c %s "${tmp_dir}/${fname}") 字节）"
             all_ok=0
         fi
     done
-
-    if [[ $all_ok -eq 1 ]]; then
-        cp -f "${geo_dir}/geoip.dat"   /usr/local/share/xray/ 2>/dev/null
-        cp -f "${geo_dir}/geosite.dat" /usr/local/share/xray/ 2>/dev/null
-        cat "${geo_dir}/proxy-list.txt" "${geo_dir}/gfw.txt" \
-            | sort -u > "${geo_dir}/geosite-no-cn.txt"
-        log_to_file "GeoIP / GeoSite 已更新"
-        # 重新加载 cn_ips（geoip-cn.txt 有更新）
-        systemctl restart rproxy-gw-load-cn-ips.service 2>/dev/null || true
-        systemctl restart xray
-        systemctl restart rproxy-gw-mosdns
-    else
-        log_to_file "部分文件下载失败，跳过本次更新"
+    if [[ $all_ok -ne 1 ]]; then
+        log_to_file "部分文件下载失败或内容异常，跳过本次更新"
+        rm -rf "$tmp_dir"
+        return
     fi
+
+    # 留一份当前在用的 dat，新数据让 Xray 起不来时换回去
+    local xray_share=/usr/local/share/xray bak_dir
+    bak_dir=$(mktemp -d)
+    cp -f "${xray_share}/geoip.dat" "${xray_share}/geosite.dat" "$bak_dir/" 2>/dev/null || true
+    mv -f "${tmp_dir}"/* "${geo_dir}/"
+    rm -rf "$tmp_dir"
+    cp -f "${geo_dir}/geoip.dat" "${geo_dir}/geosite.dat" "${xray_share}/" 2>/dev/null || true
+    cat "${geo_dir}/proxy-list.txt" "${geo_dir}/gfw.txt" \
+        | sort -u > "${geo_dir}/geosite-no-cn.txt"
+    # 重新加载 cn_ips（geoip-cn.txt 有更新）
+    systemctl restart rproxy-gw-load-cn-ips.service 2>/dev/null || true
+    systemctl restart xray || true
+    sleep 3
+    if ! is_service_active xray && [[ -f "${bak_dir}/geoip.dat" ]]; then
+        log_to_file "新 GeoIP / GeoSite 数据让 Xray 无法启动，换回原数据"
+        cp -f "${bak_dir}"/*.dat "${xray_share}/"
+        systemctl restart xray || true
+    else
+        log_to_file "GeoIP / GeoSite 已更新"
+    fi
+    rm -rf "$bak_dir"
+    systemctl restart rproxy-gw-mosdns || true
+}
+
+# geo_file_valid <文件>：粗略校验下载内容，挡住空文件、被劫持返回的网页等
+# .dat 正常为数 MB 到数十 MB；文本列表正常为数千行以上，且不是 HTML
+geo_file_valid() {
+    local f="$1"
+    [[ -s "$f" ]] || return 1
+    if head -c 512 "$f" | grep -qiE '<(!doctype|html)'; then
+        return 1
+    fi
+    case "$f" in
+        *.dat) [[ $(stat -c %s "$f") -ge 1000000 ]] ;;
+        *)     [[ $(wc -l < "$f") -ge 1000 ]] ;;
+    esac
 }
 
 # ---------- 主流程 ----------

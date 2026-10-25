@@ -46,6 +46,15 @@ func TestValidateImportBundleFixesUnknownCurrentNode(t *testing.T) {
 	}
 }
 
+// 导入文件里的 peer 名称同样会写进 wg0.conf，与新建 peer 用同一套校验
+func TestValidateImportBundleRejectsBadPeerName(t *testing.T) {
+	b := validBundle()
+	b.WGPeers = []config.WGPeer{{ID: "p1", Name: "x\nPostUp = id", Address: "172.16.7.2/32"}}
+	if err := validateImportBundle(&b); err == nil {
+		t.Fatal("peer 名称含换行应被拒绝")
+	}
+}
+
 func TestValidateImportBundleNoNodesClearsCurrent(t *testing.T) {
 	b := validBundle()
 	b.Nodes = nil

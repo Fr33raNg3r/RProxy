@@ -109,6 +109,9 @@ const upgradeStatus = ref('启动中…')
 let upgradePollTimer = null
 let upgradeNotifiedDone = false
 let preUpgradeVersion = ''
+let upgradeStartedAt = 0
+// 超过这个时间仍未看到完成标志就停止等待（正常升级 1-3 分钟）
+const UPGRADE_TIMEOUT_MS = 15 * 60 * 1000
 
 const menuIcon = (name) => () => h(SvgIcon, { name })
 const menuOptions = [
@@ -180,6 +183,7 @@ function startUpgradeProgress() {
   upgradeStatus.value = '启动中…'
   upgradeNotifiedDone = false
   preUpgradeVersion = version.value.current
+  upgradeStartedAt = Date.now()
   upgradeModal.value = true
   if (upgradePollTimer) clearInterval(upgradePollTimer)
   upgradePollTimer = setInterval(pollUpgradeLog, 1500)
@@ -187,6 +191,10 @@ function startUpgradeProgress() {
 }
 
 async function pollUpgradeLog() {
+  if (Date.now() - upgradeStartedAt > UPGRADE_TIMEOUT_MS) {
+    onUpgradeTimeout()
+    return
+  }
   try {
     const data = await api.getUpgradeLog(upgradeOffset.value)
     if (data.content) {
@@ -232,14 +240,31 @@ function onUpgradeDone() {
   if (upgradeNotifiedDone) return
   upgradeNotifiedDone = true
   upgradeFinished.value = true
-  upgradeStatus.value = '升级完毕'
   if (upgradePollTimer) {
     clearInterval(upgradePollTimer)
     upgradePollTimer = null
   }
+  // 失败、自动回滚时完成标志写成「升级完成（结果：…）」
+  if (upgradeLog.value.includes('升级完成（结果：')) {
+    upgradeStatus.value = '升级未成功'
+    message.warning('升级未成功，系统保持（或已回滚到）升级前的状态，详见日志')
+    return
+  }
+  upgradeStatus.value = '升级完毕'
   // 不自动刷新：之前 2 秒后自动 reload 会让模态框一闪而过、完成提示看不清。
   // 改为停在「升级完毕」状态，由用户点「关闭」按钮再刷新加载新版前端。
   message.success('升级完毕，点击「关闭」刷新以加载新版本 WebUI')
+}
+
+function onUpgradeTimeout() {
+  upgradeNotifiedDone = true
+  upgradeFinished.value = true
+  if (upgradePollTimer) {
+    clearInterval(upgradePollTimer)
+    upgradePollTimer = null
+  }
+  upgradeStatus.value = '等待超时'
+  message.warning('超过 15 分钟仍未完成，请查看日志，或 SSH 登录后检查 /opt/rproxy-gw/logs/upgrade.log')
 }
 
 function onUpgradeClose() {

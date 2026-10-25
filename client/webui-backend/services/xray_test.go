@@ -10,11 +10,46 @@ import (
 // Xray v26.10.21 起按扩展名识别配置文件，-format=json 也不能放行 .tmp，
 // 校验用的临时文件必须以 .json 结尾，否则切换节点时 -test 必然失败。
 func TestXrayTmpConfPathHasJSONExtension(t *testing.T) {
-	if ext := filepath.Ext(xrayTmpConfPath); ext != ".json" {
-		t.Fatalf("临时配置文件扩展名应为 .json，实际 %q（%s）", ext, xrayTmpConfPath)
+	if ext := filepath.Ext(xrayTmpConfPattern); ext != ".json" {
+		t.Fatalf("临时配置文件扩展名应为 .json，实际 %q（%s）", ext, xrayTmpConfPattern)
 	}
-	if xrayTmpConfPath == config.XrayConfPath {
+	if filepath.Base(config.XrayConfPath) == xrayTmpConfPattern {
 		t.Fatalf("临时配置文件不能与正式配置同名")
+	}
+}
+
+// 两个国内 DNS 都解析失败（多发生在网络异常、watchdog 正要重新生成配置时）：
+// 沿用上次成功解析的 IP，而不是把域名写进配置让 Xray 经 mosdns 解析（会循环依赖代理本身）
+func TestResolveAddressFallsBackToCache(t *testing.T) {
+	dir := t.TempDir()
+	oldPath, oldLookup := resolveCachePath, lookupIPv4
+	defer func() { resolveCachePath, lookupIPv4 = oldPath, oldLookup }()
+	resolveCachePath = filepath.Join(dir, "resolve-cache.json")
+
+	lookupIPv4 = func(dns, host string) string { return "203.0.113.10" }
+	if got := resolveAddress("vps.example.com"); got != "203.0.113.10" {
+		t.Fatalf("解析成功应返回 IP，实际 %q", got)
+	}
+
+	var tried []string
+	lookupIPv4 = func(dns, host string) string { tried = append(tried, dns); return "" }
+	if got := resolveAddress("vps.example.com"); got != "203.0.113.10" {
+		t.Fatalf("解析失败应沿用上次的 IP，实际 %q", got)
+	}
+	if len(tried) < 2 {
+		t.Fatalf("应依次尝试多个国内 DNS，实际只试了 %v", tried)
+	}
+	if got := resolveAddress("never-resolved.example.com"); got != "never-resolved.example.com" {
+		t.Fatalf("从未解析成功过的域名只能原样返回，实际 %q", got)
+	}
+}
+
+func TestResolveAddressKeepsIP(t *testing.T) {
+	oldLookup := lookupIPv4
+	defer func() { lookupIPv4 = oldLookup }()
+	lookupIPv4 = func(dns, host string) string { t.Fatalf("IP 不应再去解析"); return "" }
+	if got := resolveAddress("198.51.100.7"); got != "198.51.100.7" {
+		t.Fatalf("实际 %q", got)
 	}
 }
 

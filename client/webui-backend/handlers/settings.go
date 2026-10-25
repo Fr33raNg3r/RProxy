@@ -178,15 +178,17 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if needRestartWG {
-		// 1) 重新渲染 wg0.conf 并重启 WG 服务（让新端口监听生效）
+		// 1) 重新渲染 wg0.conf；仅在 WG 已启用时重启服务让新端口生效（RestartWG 会 start + enable，未启用时不能调用）
 		peers, _ := config.LoadWGPeers()
 		if err := services.RenderWGConfig(cfg, peers); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("生成 wg0.conf 失败: "+err.Error()))
 			return
 		}
-		if err := services.RestartWG(); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 WireGuard 失败: "+err.Error()))
-			return
+		if cfg.WGEnabled {
+			if err := services.RestartWG(); err != nil {
+				writeJSON(w, http.StatusInternalServerError, errorMsg("重启 WireGuard 失败: "+err.Error()))
+				return
+			}
 		}
 		// 2) 同步更新 nftables output 链中放行 WG 响应包的规则
 		// 若不更新，wg-quick 已切到新端口监听，但 output 链仍按旧端口放行，
@@ -212,11 +214,7 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{"ok": true}
 	if needRestartWebUI {
 		resp["webui_will_restart"] = true
-		// 异步重启 WebUI（让本次响应先发完）
-		go func() {
-			// 等 1 秒让响应返回
-			_ = exec.Command("bash", "-c", "sleep 1 && systemctl restart rproxy-gw-webui").Start()
-		}()
+		restartWebUIAsync()
 	}
 	if needRestartNet {
 		resp["network_will_restart"] = true
@@ -224,6 +222,13 @@ func UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		services.RestartNetworking()
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// restartWebUIAsync 异步重启 WebUI（等 1 秒让本次响应先发完），用于监听端口变更后生效
+func restartWebUIAsync() {
+	go func() {
+		_ = exec.Command("bash", "-c", "sleep 1 && systemctl restart rproxy-gw-webui").Start()
+	}()
 }
 
 // EmergencyStop POST /api/emergency-stop

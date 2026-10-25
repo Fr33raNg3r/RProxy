@@ -9,6 +9,9 @@ set -e
 
 [[ $EUID -eq 0 ]] || { echo "[错误] 请用 root 运行" >&2; exit 1; }
 
+# 先打标记：watchdog 与每日更新看到标记就不再把服务拉起来（标记在 /run，重启机器后自动清除）
+touch /run/rproxy-gw-emergency-stop
+
 echo "[紧急停止] 清空 nftables 规则..."
 nft flush ruleset 2>/dev/null || true
 
@@ -28,9 +31,6 @@ EOF
 echo ""
 echo "✅ 透明代理已停止，旁路由现在为直连模式。"
 echo ""
-echo "如需恢复，执行："
-echo "  systemctl start rproxy-gw-mosdns"
-echo "  systemctl start xray"
-echo "  nft -f /etc/nftables.conf"
-echo "  echo 'nameserver 127.0.0.1' > /etc/resolv.conf"
+echo "如需恢复：在 WebUI 点「紧急恢复」，或执行 /opt/rproxy-gw/scripts/emergency-resume.sh"
+echo "（重启旁路由也会恢复正常模式）"
 echo ""

@@ -383,7 +383,7 @@ fetch_source() {
     local url="https://github.com/${REPO_SLUG}/releases/download/${tag}/${asset}"
 
     log_info "下载 release 产物：${url}"
-    if ! curl -fsSL "$url" | tar xz -C "${BUILD_DIR}"; then
+    if ! curl -fsSL --max-time 300 "$url" | tar xz -C "${BUILD_DIR}"; then
         die "release 产物下载失败: ${url}
 （若该 tag 是从旧版 install.sh 创建的、不含 server 产物，请改用更新的 tag）"
     fi
@@ -393,7 +393,7 @@ fetch_source() {
 
 install_xray() {
     log_step "通过官方一键脚本安装 Xray-core"
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
     log_done "Xray 安装完成：$(xray version | head -n 1)"
 }
 
@@ -706,8 +706,9 @@ action_upgrade() {
 
     # 部署回滚工具并打本机快照：从这里起，任何失败都能回到升级前
     install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" "$ROLLBACK_BIN"
+    # 升级前后用同一标准（含 XHTTP）自检：只看首页的话，XHTTP 升级前就坏了也会被算成"升级导致"而回滚并跳过该版本
     local pre_ok=0
-    "$ROLLBACK_BIN" check && pre_ok=1
+    "$ROLLBACK_BIN" check --xhttp && pre_ok=1
     log_step "创建升级前快照（出问题时可执行 rproxy-rollback 恢复）"
     UPGRADE_SNAPSHOT=$("$ROLLBACK_BIN" create "升级前 ${old_ver} → ${new_ver}") \
         || die "快照创建失败（多半是磁盘空间不足），为安全起见取消升级，系统未做改动"
@@ -718,7 +719,7 @@ action_upgrade() {
     if [[ "${RPROXY_AUTO_UPGRADE:-}" == "1" && -f /var/lib/rproxy-server/no-xray-auto-update ]]; then
         log_info "Xray 自动更新已关闭，本次自动升级跳过 Xray"
     else
-        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
+        bash -c "$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || true
     fi
 
     # 部署新脚本（保留配置）
@@ -730,6 +731,8 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload
+    # 1.8.3 及更早 change-domain 不撤销旧域名的续期，旧证书续期时会覆盖当前证书：用新版 rproxy-server 清理
+    /usr/local/bin/rproxy-server _acme-cleanup || log_warn "清理旧域名证书续期失败（不影响升级），可稍后执行 rproxy-server _acme-cleanup"
     # nginx 模板也要更新：rproxy-server change-domain / regenerate 用的是这份副本
     cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
@@ -779,7 +782,7 @@ do_uninstall_silent() {
     done
 
     log_step "卸载 Xray"
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
 
     log_step "卸载 acme.sh"
     if [[ -d "${ACME_HOME}" ]]; then

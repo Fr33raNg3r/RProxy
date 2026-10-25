@@ -283,6 +283,19 @@ func fmtSscan(s string, out *int64) (int, error) {
 	return len(s), nil
 }
 
+// upgradeShellScript 由 TriggerUpgrade 在独立的 systemd 临时 unit 里执行
+var upgradeShellScript = `log=` + upgradeLogPath + `
+{
+  curl -fsSL --max-time 60 ` + installScriptRawURL + ` -o /opt/rproxy-gw/install.sh.new &&
+    mv /opt/rproxy-gw/install.sh.new /opt/rproxy-gw/install.sh &&
+    chmod +x /opt/rproxy-gw/install.sh ||
+    { echo "` + upgradeDoneMarker + `结果：下载升级脚本失败，系统未做任何改动）"; exit 1; }
+  bash /opt/rproxy-gw/install.sh upgrade
+  rc=$?
+  [ $rc -eq 0 ] || grep -q "` + upgradeDoneMarker + `" "$log" ||
+    echo "` + upgradeDoneMarker + `结果：升级失败，退出码 $rc，详见上方日志）"
+} >> "$log" 2>&1`
+
 // TriggerUpgrade POST /api/upgrade
 // 后台异步执行 install.sh upgrade
 // 立即返回，1-2 分钟后 WebUI 自己会被升级流程重启
@@ -304,13 +317,11 @@ func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	// 先重新拉取一份 install.sh 覆盖本地缓存副本再执行：本地这份是上一次升级时落地的，
 	// 一旦它本身有问题（例如 1.3.0 那次 Windows 打包把它写成了 CRLF 导致语法错误），
 	// 原地重跑同一个坏文件会让"一键升级"永远卡在同一个错误上，必须先换新才能自愈。
+	//
+	// 任何失败都要保证日志里出现"升级完成（"标志，否则前端会一直显示"升级中"：
+	// 下载 install.sh 失败时直接写标志；install.sh 失败退出且自己没写过标志（如打快照之前就出错）时补写。
 	go func() {
-		cmd := exec.Command("systemd-run", "--collect",
-			"/bin/bash", "-c",
-			"curl -fsSL "+installScriptRawURL+" -o /opt/rproxy-gw/install.sh.new "+
-				"&& mv /opt/rproxy-gw/install.sh.new /opt/rproxy-gw/install.sh "+
-				"&& chmod +x /opt/rproxy-gw/install.sh "+
-				"&& bash /opt/rproxy-gw/install.sh upgrade >> /opt/rproxy-gw/logs/upgrade.log 2>&1")
+		cmd := exec.Command("systemd-run", "--collect", "/bin/bash", "-c", upgradeShellScript)
 		_ = cmd.Start()
 	}()
 
