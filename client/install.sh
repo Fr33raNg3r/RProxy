@@ -863,6 +863,8 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/
     cp "${BUILD_DIR}/configs/logrotate/rproxy-gw" /etc/logrotate.d/rproxy-gw
     systemctl daemon-reload
+    # 1.8.5 起 watchdog 定时器从"上一轮开始"改为"上一轮结束"起算：重启定时器确保按新设置计时（不打断正在跑的一轮）
+    systemctl restart rproxy-gw-watchdog.timer 2>/dev/null || true
 
     # 启用新版本可能引入的 timer（已 enable 的不会重复 enable）
     systemctl enable --now rproxy-gw-flush-ipsets.timer 2>/dev/null || true

@@ -168,6 +168,18 @@ log_cert_days() {
     fi
 }
 
+# ---------- 5. 补齐新版功能 ----------
+# rproxy-server upgrade 优先运行本机旧版 install.sh：它会复制新脚本和单元文件，但不知道要启用新增的看门狗、
+# 也不会清理旧域名的证书续期。本脚本随升级一定会被换成新版，所以由它每天补一次（重复执行没有影响）
+ensure_new_features() {
+    if [[ -f /etc/systemd/system/rproxy-server-watchdog.timer ]] &&        ! systemctl is-enabled --quiet rproxy-server-watchdog.timer 2>/dev/null; then
+        if systemctl enable --now rproxy-server-watchdog.timer >/dev/null 2>&1; then
+            log_to_file "已启用 Xray 看门狗（rproxy-server-watchdog.timer）"
+        fi
+    fi
+    /usr/local/bin/rproxy-server _acme-cleanup >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1         || log_to_file "清理旧域名证书续期失败"
+}
+
 # ---------- 主流程 ----------
 
 if check_self_update; then
@@ -175,6 +187,7 @@ if check_self_update; then
     exit 0
 fi
 
+ensure_new_features
 update_xray
 renew_cert
 log_cert_days
