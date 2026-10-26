@@ -138,7 +138,6 @@ install_base_packages() {
     apt-get install -y --no-install-recommends \
         wget curl ca-certificates \
         nginx jq qrencode socat \
-        php-fpm php-cli php-curl \
         unattended-upgrades cron \
         unzip openssl
     log_done "基础包安装完成"
@@ -441,6 +440,10 @@ deploy_files() {
     # 复制 nginx 模板到 scripts 目录，方便 rproxy-server change-domain 调用
     cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
 
+    # 默认网站模板的副本（rproxy-server site reset 用它重新生成；升级时随版本更新）
+    rm -rf "${INSTALL_DIR}/site-template"
+    cp -a "${BUILD_DIR}/configs/site" "${INSTALL_DIR}/site-template"
+
     cp "${BUILD_DIR}/configs/systemd/"*.service /etc/systemd/system/ 2>/dev/null || true
     cp "${BUILD_DIR}/configs/systemd/"*.timer   /etc/systemd/system/ 2>/dev/null || true
     systemctl daemon-reload
@@ -451,23 +454,13 @@ deploy_files() {
 }
 
 # ============================================================================
-# 部署 LibreSpeed 静态站
+# 部署默认网站（私人影音库；旧版 LibreSpeed 测速站在升级时被替换）
 # ============================================================================
 
-deploy_librespeed() {
-    # 目录有内容但缺少测速后端文件：视为用户自定义站点，跳过部署避免覆盖
-    # 目录为空或含 empty.php + garbage.php（LibreSpeed）则照常部署/更新
-    if [[ -n "$(ls -A "${WEB_ROOT}" 2>/dev/null)" ]]; then
-        if [[ ! -f "${WEB_ROOT}/empty.php" || ! -f "${WEB_ROOT}/garbage.php" ]]; then
-            log_info "检测到自定义站点（${WEB_ROOT}），跳过 LibreSpeed 部署"
-            return 0
-        fi
-    fi
-    log_step "部署 LibreSpeed 测速网站"
-    mkdir -p "${WEB_ROOT}"
-    cp -a "${BUILD_DIR}/configs/librespeed/"* "${WEB_ROOT}/"
-    chown -R www-data:www-data "${WEB_ROOT}"
-    log_done "LibreSpeed 已部署到 ${WEB_ROOT}"
+deploy_site() {
+    # shellcheck disable=SC1091
+    source "${BUILD_DIR}/scripts/site.sh"
+    site_deploy "${BUILD_DIR}/configs/site"
 }
 
 # ============================================================================
@@ -538,6 +531,10 @@ deploy_final_nginx() {
     local ws_path
     ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
 
+    # 本项目只改自己的 rproxy-server.conf，但 nginx -t 检查的是整个 nginx：
+    # 用户自己的站点配置（如反代 Vaultwarden）已有错误时，不要在带病状态下继续改写并 reload
+    nginx_config_clean || die "检测到 nginx 当前配置就有错误（不是本项目的文件），未改动 nginx。请先执行 nginx -t 查看并修复后重试"
+
     # 先备份：nginx -t 不通过时要恢复原配置，不能把坏配置留在磁盘上
     # （运行中的 nginx 当下不受影响，但下次 reload / 证书续期 / 重启服务器就起不来）
     # .bak 后缀不匹配 conf.d/*.conf，不会被 nginx 加载
@@ -545,20 +542,7 @@ deploy_final_nginx() {
     rm -f "$bak"
     [[ -f "${NGINX_CONF}" ]] && cp -f "${NGINX_CONF}" "$bak"
 
-    # 用 sed 替换占位符
-    sed -e "s|{{DOMAIN}}|${DOMAIN}|g" \
-        -e "s|{{WS_PATH}}|${ws_path}|g" \
-        -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
-        -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
-        "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" \
-        > "${NGINX_CONF}"
-
-    # PHP 版本检测，调整 socket 路径
-    local php_sock
-    php_sock=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -1)
-    if [[ -n "$php_sock" ]]; then
-        sed -i "s|{{PHP_SOCK}}|${php_sock}|g" "${NGINX_CONF}"
-    fi
+    render_nginx_conf "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${DOMAIN}" "${ws_path}" > "${NGINX_CONF}"
 
     if ! nginx -t; then
         log_error "Nginx 配置语法错误"
@@ -663,7 +647,7 @@ action_install_fresh() {
     install_xray
 
     deploy_files
-    deploy_librespeed
+    deploy_site
     generate_server_config
 
     deploy_temp_nginx_for_acme
@@ -747,6 +731,11 @@ action_upgrade() {
     new_ver=$(cat "${BUILD_DIR}/VERSION")
     log_info "本地版本：${old_ver}    最新版本：${new_ver}"
 
+    # 本项目只改 /etc/nginx/conf.d/rproxy-server.conf，但 nginx -t 检查的是整个 nginx：
+    # 用户自己的站点配置（如反代 Vaultwarden）已有错误时，升级中途 reload 会失败并触发回滚。
+    # 先查，有错就在做任何改动之前中止
+    nginx_config_clean || die "检测到 nginx 当前配置就有错误（不是本项目的文件）。请先执行 nginx -t 查看并修复，再重新升级；本次升级未做任何改动"
+
     # 部署回滚工具并打本机快照：从这里起，任何失败都能回到升级前
     install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" "$ROLLBACK_BIN"
     # 升级前后用同一标准（含 XHTTP）自检：只看首页的话，XHTTP 升级前就坏了也会被算成"升级导致"而回滚并跳过该版本
@@ -787,8 +776,10 @@ action_upgrade() {
     cp "${BUILD_DIR}/configs/nginx/rproxy-server.conf.tpl" "${SCRIPTS_DIR}/nginx-template.conf"
     cp "${BUILD_DIR}/VERSION" "${INSTALL_DIR}/VERSION"
 
-    # 重新部署 LibreSpeed（PHP 版本可能变了）
-    deploy_librespeed
+    # 默认网站模板随版本更新；旧的 LibreSpeed 测速站在这里被替换为新的默认网站（自定义网站不动）
+    rm -rf "${INSTALL_DIR}/site-template"
+    cp -a "${BUILD_DIR}/configs/site" "${INSTALL_DIR}/site-template"
+    deploy_site
 
     # 重新渲染 nginx 和 xray 配置（防止模板有更新）
     DOMAIN=$(json_get "${SERVER_CFG}" '.domain')
@@ -797,6 +788,8 @@ action_upgrade() {
 
     restart_service xray
     systemctl reload nginx
+    # nginx 已不再引用 PHP：停用（不卸载）php-fpm，释放内存。机器上可能有用户自己的服务，不 purge / autoremove
+    site_disable_php
 
     # 升级前自检通过、升级后（含 XHTTP）不通过 → 整体回滚到升级前快照
     local snap="$UPGRADE_SNAPSHOT"
@@ -907,7 +900,7 @@ show_completion_info() {
     /usr/local/bin/rproxy-server show
     echo ""
     echo -e "  ${CYAN}测试网站访问：${NC}https://${DOMAIN}"
-    echo -e "  ${CYAN}访客看到的是 LibreSpeed 测速网站${NC}"
+    echo -e "  ${CYAN}访客看到的是一个私人影音库的登录页（站名等设置见 ${CONFIG_DIR}/site.conf；rproxy-server site import 可换成自己的网站）${NC}"
     echo ""
     echo -e "  ${CYAN}常用命令：${NC}"
     echo "    rproxy-server                显示菜单"

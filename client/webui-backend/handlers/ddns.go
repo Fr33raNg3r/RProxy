@@ -48,8 +48,8 @@ func mergeDDNSSecrets(in, old config.DDNSConfig) config.DDNSConfig {
 
 var ddnsLabels = map[string]string{"cloudflare": "Cloudflare", "dnspod": "DNSPod", "namesilo": "NameSilo"}
 
-// validateDDNSConfig 去掉各字段首尾空格并校验：整张卡片留空 = 不生效，直接通过；
-// 填了一部分但不完整则报错，避免用户以为已经生效
+// validateDDNSConfig 去掉各字段首尾空格并校验：开关关闭的记录不生效，填了多少都照样保存；
+// 开关打开的必须填写完整，避免用户以为已经生效
 func validateDDNSConfig(c *config.DDNSConfig) error {
 	for i := range c.Records {
 		r := &c.Records[i]
@@ -57,7 +57,7 @@ func validateDDNSConfig(c *config.DDNSConfig) error {
 		r.AuthID = strings.TrimSpace(r.AuthID)
 		r.Email = strings.TrimSpace(r.Email)
 		r.Secret = strings.TrimSpace(r.Secret)
-		if r.Domain == "" && r.AuthID == "" && r.Secret == "" {
+		if r.Enabled != nil && !*r.Enabled {
 			continue
 		}
 		label := ddnsLabels[r.Provider]

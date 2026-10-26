@@ -25,10 +25,9 @@ const (
 	DNSHostsPath        = "/opt/rproxy-gw/config/dns/hosts.txt"
 	DNSUpstreamsPath = "/opt/rproxy-gw/config/dns/upstreams.json"
 
-	MosdnsConfigPath  = "/opt/rproxy-gw/config/mosdns/config.yaml"
-	MosdnsLogPath     = "/opt/rproxy-gw/logs/mosdns.log"
-	XrayAccessLogPath = "/var/log/xray/access.log"
-	XrayErrorLogPath  = "/var/log/xray/error.log"
+	MosdnsConfigPath = "/opt/rproxy-gw/config/mosdns/config.yaml"
+	MosdnsLogPath    = "/opt/rproxy-gw/logs/mosdns.log"
+	XrayErrorLogPath = "/var/log/xray/error.log"
 
 	NftablesConfPath = "/etc/nftables.conf"
 

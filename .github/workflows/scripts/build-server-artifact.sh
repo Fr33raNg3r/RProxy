@@ -33,6 +33,7 @@ git_sha: ${GITHUB_SHA:-unknown}
 EOF
 
 # CRLF 校验：见 build-client-artifact.sh 里的说明。
+# 二进制素材（海报 jpg、favicon.ico）本来就可能含 0x0D 字节，不做 CRLF 检查；文本文件照常检查
 echo "==> 校验换行符（不允许 CRLF）"
 crlf=""
 while IFS= read -r f; do
@@ -40,7 +41,8 @@ while IFS= read -r f; do
         crlf="${crlf}${f}
 "
     fi
-done < <(find "${staging}/scripts" "${staging}/configs" "${staging}/install.sh" -type f)
+done < <(find "${staging}/scripts" "${staging}/configs" "${staging}/install.sh" -type f \
+    ! -path '*/configs/site/posters/*' ! -name '*.ico')
 if [ -n "$crlf" ]; then
     echo "ERR: 以下文件含 CRLF 换行符，打包中止：" >&2
     printf '%s' "$crlf" >&2

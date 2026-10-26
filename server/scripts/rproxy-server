@@ -267,19 +267,18 @@ deploy_final_nginx_inplace() {
         log_warn "找不到 nginx 模板，仅替换 server_name"
         return
     fi
-    local php_sock
-    php_sock=$(ls /run/php/php*-fpm.sock 2>/dev/null | head -1)
+    # 只改本项目自己的配置文件，但 nginx -t 查的是整个 nginx：用户自己的站点配置（如反代 Vaultwarden）已有错误时不动手，
+    # 否则 reload 失败，用户会误以为是本工具弄坏的（regenerate 还会因此让 Xray 与 nginx 的路径不一致）
+    if ! nginx_config_clean; then
+        log_error "检测到 nginx 当前配置就有错误（不是本项目的文件），未做任何改动。请先执行 nginx -t 查看并修复后重试"
+        return 1
+    fi
 
     # 先备份，nginx -t 不通过就恢复（同 install.sh 的 deploy_final_nginx）
     local bak="${NGINX_CONF}.bak"
     cp -f "${NGINX_CONF}" "$bak"
 
-    sed -e "s|{{DOMAIN}}|${domain}|g" \
-        -e "s|{{WS_PATH}}|${ws_path}|g" \
-        -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
-        -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
-        -e "s|{{PHP_SOCK}}|${php_sock}|g" \
-        "$tpl" > "${NGINX_CONF}"
+    render_nginx_conf "$tpl" "$domain" "$ws_path" > "${NGINX_CONF}"
 
     if ! nginx -t; then
         mv -f "$bak" "${NGINX_CONF}"
@@ -518,6 +517,8 @@ cmd_help() {
     upgrade                         手动升级
     xray-autoupdate [on|off]        开关 Xray 自动更新，不带参数查看状态
     optimize                        系统优化（内核切换、网络调优）
+    site import <zip 或目录>        导入自己的网站（先备份原网站，升级时不会被覆盖）
+    site reset                      恢复为默认网站（先备份当前网站）
     uninstall                       卸载
     help                            显示此帮助
 
@@ -661,6 +662,34 @@ cmd_optimize() {
 }
 
 # ============================================================================
+# 网站：导入自己的网站 / 恢复默认网站
+# ============================================================================
+
+cmd_site() {
+    require_installed
+    require_root
+    # shellcheck disable=SC1091
+    source "${SCRIPTS_DIR}/site.sh"
+    local tpl="${INSTALL_DIR}/site-template"
+    case "${1:-}" in
+        import)
+            [[ -n "${2:-}" ]] || die "用法：rproxy-server site import <zip 文件或网站目录>"
+            site_import "$2"
+            ;;
+        reset)
+            [[ -d "$tpl" ]] || die "找不到默认网站模板 ${tpl}（可先执行 rproxy-server upgrade 补齐）"
+            local confirm
+            confirm=$(ask "将用新的随机默认网站替换当前网站（原网站会先备份）。确认？(yes/no): " "no")
+            [[ "$confirm" == "yes" ]] || { log_info "已取消"; return; }
+            site_reset "$tpl"
+            ;;
+        *)
+            die "用法：rproxy-server site import <zip 文件或网站目录> | site reset"
+            ;;
+    esac
+}
+
+# ============================================================================
 # 入口
 # ============================================================================
 
@@ -675,6 +704,7 @@ main() {
         upgrade)        cmd_upgrade ;;
         xray-autoupdate) shift; cmd_xray_autoupdate "$@" ;;
         optimize)       cmd_optimize ;;
+        site)           shift; cmd_site "$@" ;;
         uninstall)      cmd_uninstall ;;
         help|-h|--help) cmd_help ;;
         _render-xray)   _render_xray ;;       # 内部使用

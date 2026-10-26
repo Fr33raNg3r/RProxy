@@ -93,11 +93,19 @@ next_probe_delay() {
 }
 
 # 经 Xray SOCKS 访问一个随机挑选的站点：收到 2xx/3xx/4xx 说明整条链路是通的；5xx 与无响应算失败
+# probe_result 记录本次的站点和结果，供汇总日志使用
 probe_once() {
-    local url code
+    local url code host
     url="${PROBE_URLS[RANDOM % ${#PROBE_URLS[@]}]}"
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
         --socks5-hostname 127.0.0.1:10808 "$url" 2>/dev/null)
+    host="${url#https://}"
+    host="${host%%/*}"
+    if [[ -z "$code" || "$code" == "000" ]]; then
+        probe_result="${host}，无响应"
+    else
+        probe_result="${host}，HTTP ${code}"
+    fi
     [[ "$code" =~ ^[234][0-9][0-9]$ ]]
 }
 
@@ -118,6 +126,14 @@ probe_round() {
     return 1
 }
 
+# log_summary <代理探测结果>：把本轮各项检查结果汇总成一行写入日志
+#（不用 IFS 拼接：IFS 只取分隔符的第一个字节，中文逗号会被截断成乱码）
+log_summary() {
+    local joined
+    joined=$(printf '%s，' "${checks[@]}")
+    log_to_file "健康检查：${joined}$1"
+}
+
 # ---------- 当前状态 ----------
 load_state
 
@@ -130,6 +146,8 @@ mosdns_active=0
 webui_active=0
 current_node=""
 last_action=""
+# 本轮各项检查结果（✓ / ✗），做代理探测的轮次汇总成一行写入日志
+checks=()
 
 is_service_active xray             && xray_active=1
 is_service_active rproxy-gw-mosdns && mosdns_active=1
@@ -163,6 +181,9 @@ if [[ $xray_active -eq 0 ]]; then
     fi
     is_service_active xray && xray_active=1
     last_action="restart_xray"
+    checks+=("Xray ✗")
+else
+    checks+=("Xray ✓")
 fi
 
 # ---------- nftables 规则表 ----------
@@ -173,22 +194,32 @@ if ! nft list table inet tp >/dev/null 2>&1; then
     systemctl restart nftables || true
     sleep 2
     last_action="reload_nftables"
+    checks+=("nftables ✗")
+else
+    checks+=("nftables ✓")
 fi
 
 # ---------- mosdns ----------
 if [[ $mosdns_active -eq 0 ]]; then
     log_to_file "mosdns 未运行，尝试重启"
     systemctl restart rproxy-gw-mosdns || true
+    checks+=("mosdns ✗")
 elif ! "${BIN_DIR}/webui" dns-check >/dev/null 2>&1; then
     # 进程还在但不应答：只看进程是否在运行发现不了，局域网会全部解析失败
     log_to_file "mosdns 在运行但不应答 DNS 查询，重启"
     systemctl restart rproxy-gw-mosdns || true
     last_action="restart_mosdns"
+    checks+=("DNS 应答 ✗")
+else
+    checks+=("mosdns ✓" "DNS 应答 ✓")
 fi
 
 if [[ $webui_active -eq 0 ]]; then
     log_to_file "webui 未运行，尝试重启"
     systemctl restart rproxy-gw-webui || true
+    checks+=("WebUI ✗")
+else
+    checks+=("WebUI ✓")
 fi
 
 # 策略路由丢失时 TPROXY 流量到不了 Xray（局域网和本机都不走代理），
@@ -196,6 +227,9 @@ fi
 if ! ip rule | grep -q 'fwmark 0x1 lookup 100' || ! ip route show table 100 | grep -q 'local default dev lo'; then
     log_to_file "策略路由（fwmark 1 → table 100）缺失，尝试恢复"
     systemctl restart rproxy-gw-iproute || true
+    checks+=("策略路由 ✗")
+else
+    checks+=("策略路由 ✓")
 fi
 
 # cn_ips 被清空（只剩 nftables.conf 预置的几条 DNS）时，国内流量会全部绕道走代理；正常加载后有数千条。
@@ -207,6 +241,9 @@ if (( now - last_cn_check >= 600 )); then
        [[ $(nft list set inet tp cn_ips | grep -oE '[0-9]+(\.[0-9]+){3}(/[0-9]+|-[0-9.]+)?' | wc -l) -lt 100 ]]; then
         log_to_file "cn_ips 集合几乎为空，尝试重新加载国内 IP"
         systemctl restart rproxy-gw-load-cn-ips || true
+        checks+=("cn_ips ✗")
+    else
+        checks+=("cn_ips ✓")
     fi
 fi
 
@@ -216,6 +253,9 @@ if is_service_active rproxy-gw-mosdns && ! grep -q '^nameserver 127\.0\.0\.1' /e
     chattr -i /etc/resolv.conf 2>/dev/null || true
     printf '# Managed by RProxy - DNS handled by mosdns on 127.0.0.1:53\nnameserver 127.0.0.1\n' > /etc/resolv.conf
     chattr +i /etc/resolv.conf 2>/dev/null || true
+    checks+=("resolv.conf ✗")
+elif is_service_active rproxy-gw-mosdns; then
+    checks+=("resolv.conf ✓")
 fi
 
 # ==================== 代理探测（按随机时间表） ====================
@@ -229,10 +269,16 @@ if [[ $xray_active -eq 1 && -n "$current_node" ]]; then
         if probe_round; then
             proxy_ok=1
             restart_count=0
+            if (( fail_count > 0 )); then
+                log_summary "代理探测 ✓（${probe_result}，此前失败 ${fail_count} 次）"
+            else
+                log_summary "代理探测 ✓（${probe_result}）"
+            fi
             # 自动故障转移后，排在前面的节点恢复了就切回去（是否需要检查、探测、切换都在 failback-check 里判断）
             "${BIN_DIR}/webui" failback-check 2>&1 | tee -a "${LOG_DIR}/$(date +%Y%m%d).log" | sed 's/^/<5>/' || true
         else
             proxy_ok=0
+            log_summary "代理探测 ✗（3 次均失败，最后一次 ${probe_result}）"
             if [[ $restart_count -lt 1 ]]; then
                 # 第一次：先重新生成配置再重启 Xray
                 # 节点域名在生成配置时才预解析成 IP，VPS 换了 IP 后只重启会一直连旧 IP

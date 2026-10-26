@@ -152,6 +152,8 @@
 
     <!-- 添加/编辑节点 -->
     <n-modal v-model:show="showModal" preset="card" :title="editingId ? '编辑节点' : '添加节点'" style="width: 540px;" :mask-closable="false">
+      <!-- 错误显示在弹窗内：页面顶部的提示会被弹窗遮住 -->
+      <n-alert v-if="formError" type="error" :show-icon="false" style="margin-bottom: 14px;">{{ formError }}</n-alert>
       <n-alert type="info" :show-icon="false" style="margin-bottom: 14px;">
         协议为 <strong>VLESS + XHTTP + TLS</strong>。地址必须是<strong>域名</strong>（不能是 IP，因为 TLS 需要 SNI 验证）。
       </n-alert>
@@ -225,6 +227,9 @@ let sse = null
 const peers = ref([])
 const speeds = ref({})
 let speedSse = null
+// 页面已离开：断线后 5 秒的重连定时器、或 onMounted 里晚到的启动，都不能再建立新连接，否则连接泄漏
+// （HTTP/1.1 下同一地址最多 6 个连接，泄漏多了所有接口请求都会卡住）
+let unmounted = false
 
 // 与 WireGuard 页一致：服务端 rx = 客户端上传，服务端 tx = 客户端下载
 function getSpeed(pubKey, dir) {
@@ -234,6 +239,7 @@ function getSpeed(pubKey, dir) {
 }
 
 function startSpeedSSE() {
+  if (unmounted) return
   speedSse = new EventSource('/api/wireguard/speed/stream', { withCredentials: true })
   speedSse.onmessage = (ev) => {
     try {
@@ -325,6 +331,7 @@ function confirmReboot() {
 }
 
 function startSSE() {
+  if (unmounted) return
   sse = new EventSource('/api/status/stream', { withCredentials: true })
   sse.onmessage = (ev) => {
     try { status.value = JSON.parse(ev.data) } catch {}
@@ -346,6 +353,7 @@ const currentNodeId = ref('')
 const showModal = ref(false)
 const editingId = ref(null)
 const saving = ref(false)
+const formError = ref('')
 const testResult = ref(null)
 const showTest = ref(false)
 
@@ -373,7 +381,7 @@ async function loadNodes() {
 function openCreate() {
   editingId.value = null
   form.value = blankForm()
-  error.value = ''
+  formError.value = ''
   showModal.value = true
 }
 
@@ -387,7 +395,7 @@ function openEdit(n) {
     ws_path: n.ws_path || '/',
     host: n.host || '',
   }
-  error.value = ''
+  formError.value = ''
   showModal.value = true
 }
 
@@ -398,19 +406,20 @@ function closeModal() {
 }
 
 async function saveNode() {
-  if (!form.value.name.trim()) { error.value = '名称不能为空'; return }
-  if (!form.value.address.trim()) { error.value = '地址不能为空'; return }
+  if (!form.value.name.trim()) { formError.value = '名称不能为空'; return }
+  if (!form.value.address.trim()) { formError.value = '地址不能为空'; return }
   if (/^\d+\.\d+\.\d+\.\d+$/.test(form.value.address) || form.value.address.includes(':')) {
-    error.value = '地址必须是域名（TLS 需要 SNI，不能用 IP）'
+    formError.value = '地址必须是域名（TLS 需要 SNI，不能用 IP）'
     return
   }
-  if (!form.value.uuid.trim()) { error.value = 'UUID 不能为空'; return }
+  if (!form.value.uuid.trim()) { formError.value = 'UUID 不能为空'; return }
   if (!form.value.ws_path.trim() || !form.value.ws_path.startsWith('/')) {
-    error.value = '路径必须以 / 开头'
+    formError.value = '路径必须以 / 开头'
     return
   }
 
   saving.value = true
+  formError.value = ''
   error.value = ''
   // 1.8.0 起只有 XHTTP，协议固定
   const payload = { ...form.value, protocol: 'vless-xhttp' }
@@ -436,7 +445,7 @@ async function saveNode() {
     await loadNodes()
     setTimeout(() => { success.value = '' }, 3000)
   } catch (e) {
-    error.value = '保存失败：' + e.message
+    formError.value = '保存失败：' + e.message
   } finally {
     saving.value = false
   }
@@ -529,6 +538,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unmounted = true
   if (sse) sse.close()
   if (speedSse) speedSse.close()
 })

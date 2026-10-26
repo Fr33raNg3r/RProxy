@@ -23,7 +23,6 @@ import { api } from '../api'
 
 const componentOpts = [
   { label: 'Xray - 错误日志', value: 'xray-error' },
-  { label: 'Xray - 连接记录', value: 'xray-access' },
   { label: 'mosdns', value: 'mosdns' },
   { label: 'WebUI', value: 'webui' },
   { label: '健康检查', value: 'watchdog' },
@@ -32,6 +31,7 @@ const componentOpts = [
 ]
 const lineOpts = [
   { label: '最近 100 行', value: 100 },
+  { label: '最近 200 行', value: 200 },
   { label: '最近 500 行', value: 500 },
   { label: '最近 1000 行', value: 1000 },
   { label: '最近 2000 行', value: 2000 }

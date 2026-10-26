@@ -109,7 +109,7 @@ func nodeIPs() map[string]bool {
 	return ips
 }
 
-// syncRecords 对每条填写完整的记录：IP 没变就跳过，变了就调用 upsert。
+// syncRecords 对每条生效的记录（开关打开且填写完整）：IP 没变就跳过，变了就调用 upsert。
 // last 保存"记录 ID -> 上次成功写入的指纹"，指纹包含厂商/域名/IP，
 // 所以改了记录的域名或厂商也会重新写入。
 // 返回本轮实际尝试过的记录的结果（nil 表示成功），跳过的记录不在其中。
@@ -117,7 +117,7 @@ func syncRecords(recs []config.DDNSRecord, ip string, last map[string]string,
 	upsert func(config.DDNSRecord, string) error) map[string]error {
 	res := map[string]error{}
 	for _, r := range recs {
-		if !r.Complete() {
+		if !r.Active() {
 			continue
 		}
 		fp := strings.Join([]string{r.Provider, r.Domain, r.Email, ip}, "|")
@@ -567,10 +567,10 @@ func RunDDNSNow() {
 	}
 	configured := false
 	for _, r := range cfg.Records {
-		configured = configured || r.Complete()
+		configured = configured || r.Active()
 	}
 	if !configured {
-		return // 三家都没填，不生效
+		return // 三家都没有生效的记录
 	}
 
 	ip, err := fetchWANIP(wanIPURLs)
@@ -589,10 +589,10 @@ func RunDDNSNow() {
 
 	ddnsMu.Lock()
 	defer ddnsMu.Unlock()
-	// 清掉已删除记录的状态
+	// 清掉已删除或已关闭记录的状态（重新打开时会重新写入一次）
 	live := map[string]bool{}
 	for _, r := range cfg.Records {
-		if r.Complete() {
+		if r.Active() {
 			live[r.ID] = true
 		}
 	}

@@ -25,6 +25,41 @@ func TestDDNSRecordComplete(t *testing.T) {
 	}
 }
 
+func TestDDNSRecordActive(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name string
+		r    DDNSRecord
+		want bool
+	}{
+		{"开启且填全", DDNSRecord{Provider: "namesilo", Domain: "a.com", Secret: "k", Enabled: &on}, true},
+		{"关闭但填全", DDNSRecord{Provider: "namesilo", Domain: "a.com", Secret: "k", Enabled: &off}, false},
+		{"开启但没填全", DDNSRecord{Provider: "namesilo", Domain: "a.com", Enabled: &on}, false},
+		{"旧数据无开关、填全", DDNSRecord{Provider: "namesilo", Domain: "a.com", Secret: "k"}, true},
+	}
+	for _, c := range cases {
+		if got := c.r.Active(); got != c.want {
+			t.Errorf("%s: Active() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// 旧版本没有开关字段：填写完整的记录迁移为开启，其余为关闭；已有的开关值保持不变
+func TestNormalizeDDNSFillsMissingEnabled(t *testing.T) {
+	off := false
+	got := NormalizeDDNS(DDNSConfig{Records: []DDNSRecord{
+		{Provider: "cloudflare", Domain: "a.com", Secret: "t"},
+		{Provider: "dnspod", Domain: "b.com"},
+		{Provider: "namesilo", Domain: "c.com", Secret: "k", Enabled: &off},
+	}})
+	want := map[string]bool{"cloudflare": true, "dnspod": false, "namesilo": false}
+	for _, r := range got.Records {
+		if r.Enabled == nil || *r.Enabled != want[r.Provider] {
+			t.Errorf("%s: enabled = %v，期望 %v", r.Provider, r.Enabled, want[r.Provider])
+		}
+	}
+}
+
 func TestNormalizeDDNSAlwaysThreeFixedProviders(t *testing.T) {
 	got := NormalizeDDNS(DDNSConfig{})
 	want := []string{"cloudflare", "dnspod", "namesilo"}
@@ -97,8 +132,10 @@ func TestDDNSConfigRoundTripAndMissingFile(t *testing.T) {
 		t.Fatalf("文件不存在时应返回 3 张空白卡片，得到 %+v, %v", c, err)
 	}
 
+	off := false
 	in := NormalizeDDNS(DDNSConfig{Records: []DDNSRecord{
 		{Provider: "dnspod", Domain: "h.a.com", AuthID: "9", Secret: "s"},
+		{Provider: "namesilo", Domain: "n.com", Enabled: &off}, // 关闭时没填全的内容也要保存下来
 	}})
 	if err := SaveDDNSConfig(in); err != nil {
 		t.Fatal(err)
@@ -108,8 +145,11 @@ func TestDDNSConfigRoundTripAndMissingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range out.Records {
-		if r.Provider == "dnspod" && (r.Secret != "s" || r.AuthID != "9" || r.Domain != "h.a.com") {
+		if r.Provider == "dnspod" && (r.Secret != "s" || r.AuthID != "9" || r.Domain != "h.a.com" || !*r.Enabled) {
 			t.Fatalf("读回不一致: %+v", r)
+		}
+		if r.Provider == "namesilo" && (r.Domain != "n.com" || *r.Enabled) {
+			t.Fatalf("关闭的记录读回不一致: %+v", r)
 		}
 	}
 }

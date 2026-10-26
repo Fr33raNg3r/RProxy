@@ -13,7 +13,7 @@
 #   rproxy-rollback --reason <原因>   恢复后写入告警文件时使用的原因
 #   rproxy-rollback create <说明>     创建快照，成功时在标准输出打印快照名
 #   rproxy-rollback check [--xhttp]   本机自检：Xray/Nginx 运行、首页 200、
-#                                     加 --xhttp 时经 Nginx 访问 XHTTP 路径应为 400（502 表示 Xray 不通）
+#                                     加 --xhttp 时经 Nginx 访问 XHTTP 路径应为 400 或 404（旧配置 400，新配置把 400 改写成站点 404；502 表示 Xray 不通）
 # ============================================================================
 
 set -uo pipefail
@@ -81,7 +81,7 @@ cmd_check() {
     if [[ $want_xhttp -eq 1 ]]; then
         code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 \
                    --resolve "${domain}:443:127.0.0.1" "https://${domain}${path}/" 2>/dev/null)
-        [[ "$code" == "400" ]] || { err "自检：XHTTP 路径返回 ${code:-无响应}（应为 400，502 表示 Xray 不通）"; return 1; }
+        [[ "$code" == "400" || "$code" == "404" ]] || { err "自检：XHTTP 路径返回 ${code:-无响应}（应为 400 或 404，502 表示 Xray 不通）"; return 1; }
     fi
     msg "自检通过"
 }

@@ -106,10 +106,12 @@ func TestSyncRecordsSkipsWhenIPUnchanged(t *testing.T) {
 }
 
 func TestSyncRecordsFailureIsRetriedAndIsolated(t *testing.T) {
+	disabled := false
 	recs := []config.DDNSRecord{
 		{ID: "bad", Provider: "dnspod", Domain: "x.com", AuthID: "1", Secret: "s"},
 		{ID: "ok", Provider: "namesilo", Domain: "y.com", Secret: "s"},
 		{ID: "off", Provider: "cloudflare", Domain: "z.com"}, // 没填密钥：未配置完整
+		{ID: "switched-off", Provider: "cloudflare", Domain: "w.com", Secret: "s", Enabled: &disabled},
 	}
 	last := map[string]string{}
 	var mu sync.Mutex
@@ -130,6 +132,9 @@ func TestSyncRecordsFailureIsRetriedAndIsolated(t *testing.T) {
 	}
 	if _, ok := res["off"]; ok || seen["off"] != 0 {
 		t.Fatal("没填完整的记录不应被处理")
+	}
+	if _, ok := res["switched-off"]; ok || seen["switched-off"] != 0 {
+		t.Fatal("开关关闭的记录不应被处理")
 	}
 	syncRecords(recs, "1.1.1.1", last, up)
 	if seen["bad"] != 2 || seen["ok"] != 1 {

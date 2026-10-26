@@ -134,8 +134,35 @@ const stopOutput = ref('')
 const importing = ref(false)
 const importResult = ref('')
 
-function exportConfig() {
-  window.location.href = api.exportConfigURL()
+// 先取回内容再触发下载：直接跳转到下载地址时，登录过期或后端出错会离开 WebUI、显示原始错误文本
+async function exportConfig() {
+  error.value = ''
+  try {
+    const resp = await fetch(api.exportConfigURL(), { credentials: 'same-origin' })
+    if (resp.status === 401) {
+      location.href = '/login'
+      return
+    }
+    if (!resp.ok) {
+      const text = await resp.text()
+      let msg = text
+      try { msg = JSON.parse(text).error || text } catch {}
+      throw new Error(msg || '导出失败')
+    }
+    const disposition = resp.headers.get('content-disposition') || ''
+    const name = disposition.match(/filename="?([^";]+)"?/)?.[1] || 'rproxy-client-config.yaml'
+    const url = URL.createObjectURL(await resp.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    // 立即释放可能让下载还没开始就失效，稍后再释放
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+  } catch (e) {
+    error.value = '导出失败：' + e.message
+  }
 }
 
 async function onImportFile(e) {

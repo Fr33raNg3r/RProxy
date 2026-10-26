@@ -160,7 +160,12 @@ xray_health_after_upgrade() {
 
 # ---------- 3. 更新 GeoIP / GeoSite ----------
 update_geo_data() {
-    log_to_file "更新 GeoIP / GeoSite 数据"
+    # 上游最新 Release 的 tag 即数据生成时间（如 202610252213），从 releases/latest 的跳转地址里取，取不到不影响更新
+    local rel
+    rel=$(curl -fsI --max-time 30 -o /dev/null -w '%{redirect_url}' \
+              https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest 2>/dev/null || true)
+    rel="${rel##*/}"
+    log_to_file "更新 GeoIP / GeoSite 数据${rel:+（上游 v2ray-rules-dat 版本 ${rel}）}"
     local geo_dir="${INSTALL_DIR}/data/geo"
     mkdir -p "$geo_dir"
 
@@ -194,6 +199,26 @@ update_geo_data() {
         return
     fi
 
+    # 逐个与在用的文件比较，写出变化；全部没变化就不替换、不重启（每日重启 Xray / mosdns 会断开局域网现有连接）
+    local f changed=0 unchanged=()
+    for entry in "${urls[@]}"; do
+        f="${entry%%=*}"
+        if cmp -s "${tmp_dir}/${f}" "${geo_dir}/${f}"; then
+            unchanged+=("$f")
+        else
+            changed=1
+            log_to_file "  ${f}：$(geo_change_desc "${geo_dir}/${f}" "${tmp_dir}/${f}")"
+        fi
+    done
+    if [[ $changed -eq 0 ]]; then
+        log_to_file "GeoIP / GeoSite 全部无变化，不替换、不重启 Xray / mosdns"
+        rm -rf "$tmp_dir"
+        return
+    fi
+    if [[ ${#unchanged[@]} -gt 0 ]]; then
+        log_to_file "  无变化：${unchanged[*]}"
+    fi
+
     # 留一份当前在用的 dat，新数据让 Xray 起不来时换回去
     local xray_share=/usr/local/share/xray bak_dir
     bak_dir=$(mktemp -d)
@@ -216,6 +241,27 @@ update_geo_data() {
     fi
     rm -rf "$bak_dir"
     systemctl restart rproxy-gw-mosdns || true
+}
+
+# geo_change_desc <旧文件> <新文件>：描述一个 Geo 文件的变化
+# .dat 是二进制，只比大小；文本列表按行比较增删（不计顺序）
+geo_change_desc() {
+    local old="$1" new="$2"
+    if [[ ! -f "$old" ]]; then
+        echo "新增"
+        return
+    fi
+    case "$new" in
+        *.dat)
+            echo "大小 $(awk -v b="$(stat -c %s "$old")" 'BEGIN{printf "%.1f MB", b/1048576}') → $(awk -v b="$(stat -c %s "$new")" 'BEGIN{printf "%.1f MB", b/1048576}')"
+            ;;
+        *)
+            local added removed
+            added=$(LC_ALL=C comm -13 <(LC_ALL=C sort -u "$old") <(LC_ALL=C sort -u "$new") | wc -l)
+            removed=$(LC_ALL=C comm -23 <(LC_ALL=C sort -u "$old") <(LC_ALL=C sort -u "$new") | wc -l)
+            echo "新增 ${added} 行，删除 ${removed} 行（共 $(wc -l < "$new") 行）"
+            ;;
+    esac
 }
 
 # geo_file_valid <文件>：粗略校验下载内容，挡住空文件、被劫持返回的网页等

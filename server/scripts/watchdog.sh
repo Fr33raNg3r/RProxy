@@ -54,7 +54,7 @@ local_code() {
         --resolve "${domain}:443:127.0.0.1" "https://${domain}$1" 2>/dev/null
 }
 
-# Xray 正常时 XHTTP 路径对普通 GET 返回 400。Xray 进程没了时 Nginx 返回 502；
+# Xray 正常时 XHTTP 路径对普通 GET 返回 404（Xray 原本回 400，被 nginx 改写成站点 404 页面）。Xray 进程没了时 Nginx 返回 502；
 # Xray 卡死（进程在、端口还能连上但不回应）时 Nginx 一直等后端（grpc_read_timeout 315 秒），curl 超时得到 000
 code=$(local_code "${path}/")
 if [[ "$code" =~ ^[234][0-9][0-9]$ ]]; then

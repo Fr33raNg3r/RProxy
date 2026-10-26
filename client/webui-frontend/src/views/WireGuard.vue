@@ -114,6 +114,8 @@
 
     <!-- 添加 Peer -->
     <n-modal v-model:show="showCreate" preset="card" title="添加 WireGuard Peer" style="width: 460px;">
+      <!-- 错误显示在弹窗内：页面顶部的提示会被弹窗遮住 -->
+      <n-alert v-if="createError" type="error" :show-icon="false" style="margin-bottom: 12px;">{{ createError }}</n-alert>
       <n-form label-placement="top" :show-feedback="false">
         <n-form-item label="名称 *">
           <n-input v-model:value="newName" placeholder="如：我的手机" autofocus />
@@ -148,7 +150,7 @@
         readonly
         :autosize="{ minRows: 8, maxRows: 14 }"
         :placeholder="cfgLoading ? '加载中…' : (cfgError || '')"
-        style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;"
+        style="font-family: Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', monospace; font-size: 13px;"
       />
       <template #footer>
         <div style="display: flex; gap: 8px; justify-content: flex-end;">
@@ -182,6 +184,7 @@ const success = ref('')
 const showCreate = ref(false)
 const newName = ref('')
 const creating = ref(false)
+const createError = ref('')
 
 const qrPeer = ref(null)
 const qrVisible = ref(false)
@@ -191,19 +194,28 @@ const savingEndpoint = ref(false)
 
 const speeds = ref({})
 let sse = null
+// 页面已离开：断线后 5 秒的重连定时器、或 onMounted 里晚到的启动，都不能再建立新连接，否则连接泄漏
+// （HTTP/1.1 下同一地址最多 6 个连接，泄漏多了所有接口请求都会卡住）
+let unmounted = false
 
 const qrUrl = computed(() => qrPeer.value ? api.peerQRCodeURL(qrPeer.value.id, endpoint.value) : '')
 const cfgText = ref('')
 const cfgLoading = ref(false)
 const cfgError = ref('')
 
+// 配置加载的序号：Endpoint 留空时后端要现查公网 IP，返回可能要几秒。
+// 期间关掉弹窗再打开另一个 peer，晚到的旧结果不能覆盖当前 peer 的配置
+let cfgSeq = 0
+
 async function loadConfigText(peer) {
+  const seq = ++cfgSeq
   cfgText.value = ''
   cfgError.value = ''
   cfgLoading.value = true
   try {
     const url = api.peerConfigURL(peer.id, endpoint.value)
     const resp = await fetch(url, { credentials: 'same-origin' })
+    if (seq !== cfgSeq) return
     if (resp.status === 401) {
       location.href = '/login'
       return
@@ -214,28 +226,38 @@ async function loadConfigText(peer) {
       try { msg = JSON.parse(text).error || text } catch {}
       throw new Error(msg || '加载失败')
     }
-    cfgText.value = await resp.text()
+    const text = await resp.text()
+    if (seq !== cfgSeq) return
+    cfgText.value = text
   } catch (e) {
-    cfgError.value = e.message || '加载失败'
+    if (seq === cfgSeq) cfgError.value = e.message || '加载失败'
   } finally {
-    cfgLoading.value = false
+    if (seq === cfgSeq) cfgLoading.value = false
   }
 }
 
-async function copyConfig() {
+async function copyConfig(e) {
   if (!cfgText.value) return
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(cfgText.value)
     } else {
+      // 内网 HTTP 非安全上下文走 execCommand 兜底。
+      // textarea 必须挂在弹窗内部：n-modal 默认开启焦点陷阱，挂到 body 上会被抢走焦点，选区丢失导致复制为空
+      const container = e?.currentTarget?.parentElement || document.body
       const ta = document.createElement('textarea')
       ta.value = cfgText.value
+      ta.setAttribute('readonly', '')
       ta.style.position = 'fixed'
+      ta.style.top = '0'
+      ta.style.left = '0'
       ta.style.opacity = '0'
-      document.body.appendChild(ta)
+      container.appendChild(ta)
+      ta.focus()
       ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
+      const ok = document.execCommand('copy')
+      container.removeChild(ta)
+      if (!ok) throw new Error('浏览器拒绝了复制操作，请手动选中配置文本复制')
     }
     message.success('已复制到剪贴板')
   } catch (e) {
@@ -244,6 +266,8 @@ async function copyConfig() {
 }
 
 function onQrClose() {
+  cfgSeq++ // 作废还没返回的加载
+  cfgLoading.value = false
   qrPeer.value = null
   cfgText.value = ''
   cfgError.value = ''
@@ -343,16 +367,17 @@ async function saveEndpoint() {
 
 function openCreate() {
   newName.value = ''
+  createError.value = ''
   showCreate.value = true
 }
 
 async function createPeer() {
   if (!newName.value.trim()) {
-    error.value = '请填写名称'
+    createError.value = '请填写名称'
     return
   }
   creating.value = true
-  error.value = ''
+  createError.value = ''
   try {
     await api.createPeer(newName.value.trim())
     showCreate.value = false
@@ -360,7 +385,7 @@ async function createPeer() {
     setTimeout(() => success.value = '', 2500)
     await load()
   } catch (e) {
-    error.value = e.message
+    createError.value = e.message
   } finally {
     creating.value = false
   }
@@ -392,6 +417,7 @@ function showQR(p) {
 }
 
 function startSpeedSSE() {
+  if (unmounted) return
   sse = new EventSource('/api/wireguard/speed/stream', { withCredentials: true })
   sse.onmessage = (ev) => {
     try {
@@ -420,6 +446,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  unmounted = true
   if (sse) sse.close()
 })
 </script>

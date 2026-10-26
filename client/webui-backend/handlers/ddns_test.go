@@ -86,24 +86,45 @@ func TestBundleRoundTripKeepsPeersAndDDNS(t *testing.T) {
 	}
 }
 
-func TestValidateDDNSConfigBlankIsOKPartialIsRejected(t *testing.T) {
+func TestValidateDDNSConfigOnlyChecksEnabledRecords(t *testing.T) {
 	blank := config.NormalizeDDNS(config.DDNSConfig{})
 	if err := validateDDNSConfig(&blank); err != nil {
 		t.Fatalf("全部留空应通过（不生效），实际 %v", err)
 	}
 
+	on := true
 	partial := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
-		{Provider: "cloudflare", Domain: "a.com"}, // 填了域名没填密钥
+		{Provider: "cloudflare", Domain: "a.com", Enabled: &on}, // 打开了开关，填了域名没填密钥
 	}})
 	if err := validateDDNSConfig(&partial); err == nil {
-		t.Fatal("只填了一半应报错")
+		t.Fatal("打开开关但只填了一半应报错")
 	}
 
 	dnspodNoID := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
-		{Provider: "dnspod", Domain: "a.com", Secret: "t"},
+		{Provider: "dnspod", Domain: "a.com", Secret: "t", Enabled: &on},
 	}})
 	if err := validateDDNSConfig(&dnspodNoID); err == nil {
 		t.Fatal("DNSPod 缺 API ID 应报错")
+	}
+
+	// 开关关闭时只填了一部分也能保存，内容原样保留（去掉首尾空格）
+	off := false
+	disabledPartial := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
+		{Provider: "cloudflare", Domain: " a.com ", Enabled: &off},
+	}})
+	if err := validateDDNSConfig(&disabledPartial); err != nil {
+		t.Fatalf("关闭的记录不应校验完整性，实际 %v", err)
+	}
+	if disabledPartial.Records[0].Domain != "a.com" {
+		t.Errorf("关闭的记录也应规整域名: %+v", disabledPartial.Records[0])
+	}
+
+	// 开关打开但一项没填：提示要填写
+	enabledBlank := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{
+		{Provider: "namesilo", Enabled: &on},
+	}})
+	if err := validateDDNSConfig(&enabledBlank); err == nil {
+		t.Fatal("打开开关却没填写应报错")
 	}
 
 	ok := config.NormalizeDDNS(config.DDNSConfig{Records: []config.DDNSRecord{

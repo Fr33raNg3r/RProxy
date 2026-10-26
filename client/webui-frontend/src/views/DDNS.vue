@@ -13,7 +13,7 @@
 
     <n-card size="medium" style="margin-bottom: 16px;">
       <div class="text-muted text-sm" style="margin-bottom: 10px;">
-        哪家填写完整（域名、密钥）并保存，哪家就生效；留空则不生效。每 5 分钟自动查询公网 IP（IPv4），变化时更新对应的 A 记录。
+        打开开关的服务商生效（需填写完整域名、密钥）；关闭后填写的内容仍会保留，随时可以再打开。开关切换即时保存。每 5 分钟自动查询公网 IP（IPv4），变化时更新对应的 A 记录。
       </div>
       <span class="text-muted">当前公网 IP：<span class="text-mono">{{ status.wan_ip || '未知' }}</span></span>
       <span v-if="status.error" style="color: #f87171; margin-left: 16px;">{{ status.error }}</span>
@@ -25,6 +25,8 @@
           <div style="display: flex; align-items: center; gap: 10px;">
             <span>{{ labels[r.provider] }}</span>
             <n-tag :type="statusOf(r).type" size="small" round>{{ statusOf(r).text }}</n-tag>
+            <n-switch :value="r.enabled" :loading="toggling === r.id" :disabled="saving" style="margin-left: auto;"
+                      @update:value="v => toggle(r, v)" />
           </div>
         </template>
         <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -57,6 +59,8 @@ const error = ref('')
 const success = ref('')
 const saving = ref(false)
 const running = ref(false)
+// 正在切换开关的记录 ID
+const toggling = ref('')
 
 function secretHint(p) {
   if (p === 'cloudflare') return 'API Token（需 Zone:读取 + DNS:编辑权限），或 Global API Key'
@@ -73,8 +77,14 @@ function fmtTime(t) {
   return t ? new Date(t).toLocaleString() : ''
 }
 
+// 与后端 Active() 一致：开关打开且填写完整才生效
+function isActive(r) {
+  return r.enabled && isComplete(r)
+}
+
 function statusOf(r) {
-  if (!isComplete(r)) return { text: '未配置', type: 'default' }
+  if (!r.enabled) return { text: '已关闭', type: 'default' }
+  if (!isComplete(r)) return { text: '未填写完整', type: 'warning' }
   const s = status.value.records?.[r.id]
   if (!s) return { text: '等待更新', type: 'info' }
   if (s.ok) return { text: '✓ 已更新', type: 'success', detail: `${s.ip}（${fmtTime(s.time)}）` }
@@ -112,21 +122,49 @@ async function pollStatus(checkedBefore) {
   }
 }
 
-async function save() {
-  saving.value = true
+// 提交整页配置，成功返回 true
+async function persist() {
   error.value = ''
   try {
-    const checkedBefore = status.value.checked
     const r = await api.saveDDNS(cfg.value)
     cfg.value = r.config
-    success.value = '已保存'
-    setTimeout(() => success.value = '', 3000)
-    if (cfg.value.records.some(isComplete)) await pollStatus(checkedBefore)
+    return true
   } catch (e) {
     error.value = '保存失败：' + e.message
+    return false
+  }
+}
+
+function flashSuccess(msg) {
+  success.value = msg
+  setTimeout(() => { if (success.value === msg) success.value = '' }, 3000)
+}
+
+async function save() {
+  saving.value = true
+  try {
+    const checkedBefore = status.value.checked
+    if (!(await persist())) return
+    flashSuccess('已保存')
+    if (cfg.value.records.some(isActive)) await pollStatus(checkedBefore)
   } finally {
     saving.value = false
   }
+}
+
+// 切换开关即时保存（连同页面上其他已修改的内容）；失败时开关恢复原状
+async function toggle(r, val) {
+  toggling.value = r.id
+  const checkedBefore = status.value.checked
+  r.enabled = val
+  const ok = await persist()
+  toggling.value = ''
+  if (!ok) {
+    r.enabled = !val
+    return
+  }
+  flashSuccess(`${labels[r.provider]} 已${val ? '开启' : '关闭'}`)
+  if (val) await pollStatus(checkedBefore)
 }
 
 async function runNow() {

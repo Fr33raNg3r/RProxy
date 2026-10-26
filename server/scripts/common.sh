@@ -174,6 +174,23 @@ restart_service() {
     systemctl restart "$1"
 }
 
+# ---------- nginx 配置 ----------
+
+# render_nginx_conf <模板文件> <域名> <XHTTP 路径>：把模板渲染后输出到标准输出
+render_nginx_conf() {
+    sed -e "s|{{DOMAIN}}|$2|g" \
+        -e "s|{{WS_PATH}}|$3|g" \
+        -e "s|{{WEB_ROOT}}|${WEB_ROOT}|g" \
+        -e "s|{{SSL_DIR}}|${SSL_DIR}|g" \
+        "$1"
+}
+
+# nginx 当前整体配置是否通过检查。本项目只改自己的 rproxy-server.conf，但 nginx -t 检查的是整个 nginx：
+# 机器上用户自己的站点配置（例如反代 Vaultwarden）已有错误时返回失败，调用方应据此放弃改动，而不是把别人的问题混进自己的流程
+nginx_config_clean() {
+    nginx -t >/dev/null 2>&1
+}
+
 # ---------- JSON 操作 ----------
 json_get() { jq -r "$2" "$1" 2>/dev/null; }
 

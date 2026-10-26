@@ -18,11 +18,13 @@ var muDDNS sync.Mutex
 var DDNSProviders = []string{"cloudflare", "dnspod", "namesilo"}
 
 // DDNSRecord 是一家服务商对应的 DDNS 记录（ID 固定等于服务商名）
-// 填写完整（见 Complete）才生效，留空即不生效
+// 开关打开且填写完整（见 Active）才生效；关闭时填写的内容照样保存，随时可以再打开
 type DDNSRecord struct {
 	ID       string `json:"id" yaml:"id"`
 	Provider string `json:"provider" yaml:"provider"` // cloudflare / dnspod / namesilo
-	Domain   string `json:"domain" yaml:"domain"`     // 完整域名，如 home.example.com；主域名由后端自动探测
+	// Enabled 是页面上的开关。旧版本没有此字段（nil），由 NormalizeDDNS 按是否填写完整补上
+	Enabled *bool  `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	Domain  string `json:"domain" yaml:"domain"` // 完整域名，如 home.example.com；主域名由后端自动探测
 	// Sub 是旧版本遗留字段（子域名），读取时由 NormalizeDDNS 合并进 Domain，之后恒为空
 	Sub    string `json:"sub,omitempty" yaml:"sub,omitempty"`
 	AuthID string `json:"auth_id" yaml:"auth_id"` // 仅 DNSPod 使用（API ID）
@@ -39,6 +41,11 @@ func (r DDNSRecord) Complete() bool {
 		return false
 	}
 	return r.Provider != "dnspod" || r.AuthID != ""
+}
+
+// Active 判断这条记录是否生效：开关打开且填写完整（没有开关值的旧数据只看是否填写完整）
+func (r DDNSRecord) Active() bool {
+	return r.Complete() && (r.Enabled == nil || *r.Enabled)
 }
 
 // DDNSConfig 是 ddns.json 的整体结构
@@ -71,6 +78,12 @@ func NormalizeDDNS(in DDNSConfig) DDNSConfig {
 		}
 		rec.Sub = ""
 		rec.ID = p
+		// 补上开关值（旧版本按是否填写完整决定），并复制一份，不和输入共用指针
+		enabled := rec.Complete()
+		if rec.Enabled != nil {
+			enabled = *rec.Enabled
+		}
+		rec.Enabled = &enabled
 		out.Records = append(out.Records, rec)
 	}
 	return out

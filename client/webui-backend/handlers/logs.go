@@ -35,8 +35,6 @@ func GetLogs(w http.ResponseWriter, r *http.Request) {
 	switch component {
 	case "mosdns":
 		out, err = services.TailFile(config.MosdnsLogPath, lines)
-	case "xray-access":
-		out, err = services.TailFile(config.XrayAccessLogPath, lines)
 	case "xray-error":
 		out, err = services.TailFile(config.XrayErrorLogPath, lines)
 	case "webui":

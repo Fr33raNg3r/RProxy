@@ -200,7 +200,21 @@ function startUpgradeProgress() {
   pollUpgradeLog()
 }
 
+// 上一次轮询还没返回时跳过本次：服务重启期间请求变慢，两次请求带着同一个 offset 并发，
+// 同一段日志会被追加两遍
+let upgradePolling = false
+
 async function pollUpgradeLog() {
+  if (upgradePolling) return
+  upgradePolling = true
+  try {
+    await pollUpgradeLogOnce()
+  } finally {
+    upgradePolling = false
+  }
+}
+
+async function pollUpgradeLogOnce() {
   if (Date.now() - upgradeStartedAt > UPGRADE_TIMEOUT_MS) {
     onUpgradeTimeout()
     return
