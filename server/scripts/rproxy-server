@@ -30,6 +30,13 @@ _render_xray() {
     mkdir -p /usr/local/etc/xray
     # 临时文件必须以 .json 结尾：Xray v26.10.21 起按扩展名识别格式，.tmp 会被拒绝（-format=json 也无效）
     local tmp="${XRAY_CONFIG_FILE%.json}.tmp.json"
+    _render_xray_to "$uuid" "$ws_path" "$tmp" || return 1
+    mv "$tmp" "${XRAY_CONFIG_FILE}"
+}
+
+# _render_xray_to <uuid> <路径> <输出文件>：生成 Xray 配置并用 xray -test 校验，不通过时删掉输出文件并返回 1
+_render_xray_to() {
+    local uuid="$1" ws_path="$2" tmp="$3"
     cat > "$tmp" <<EOF
 {
   "log": {
@@ -80,7 +87,6 @@ EOF
         rm -f "$tmp"
         return 1
     fi
-    mv "$tmp" "${XRAY_CONFIG_FILE}"
 }
 
 _apply_xray() {
@@ -248,11 +254,12 @@ _remove_stale_acme_domains() {
     done
 }
 
-# 工具：用源码模板重新渲染 nginx
+# 工具：用源码模板重新渲染 nginx；可传入 XHTTP 路径（regenerate 在写入 server.json 之前先用新路径渲染校验），
+# 不传则用 server.json 里的路径
 deploy_final_nginx_inplace() {
     local domain ws_path
     domain=$(json_get "${SERVER_CFG}" '.domain')
-    ws_path=$(json_get "${SERVER_CFG}" '.ws_path')
+    ws_path="${1:-$(json_get "${SERVER_CFG}" '.ws_path')}"
 
     # 用已部署的脚本目录里的模板
     local tpl="${SCRIPTS_DIR}/nginx-template.conf"
@@ -290,21 +297,31 @@ deploy_final_nginx_inplace() {
 cmd_regenerate() {
     require_installed
     require_root
+    # 没有模板就无法改 nginx 的路径，Xray 与 nginx 路径不一致会让所有客户端断线
+    [[ -f "${SCRIPTS_DIR}/nginx-template.conf" ]] \
+        || die "找不到 nginx 模板 ${SCRIPTS_DIR}/nginx-template.conf，无法重新生成（可先执行 rproxy-server upgrade 补齐）"
     log_warn "这将重新生成 UUID 和 WS 路径，所有现有客户端需要更新配置！"
     local confirm
     confirm=$(ask "确认继续？(yes/no): " "no")
     [[ "$confirm" == "yes" ]] || { log_info "已取消"; return; }
 
-    local new_uuid new_ws_path
+    local new_uuid new_ws_path tmp
     new_uuid=$(xray uuid)
     new_ws_path="/$(openssl rand -hex 8)"
 
+    # 先生成并校验新的 Xray 与 nginx 配置，都通过后才生效：任何一步失败都保持原样。
+    # 不能先写 server.json：校验失败后 Xray 与 nginx 的路径会对不上，之后 Xray 一重启所有客户端就断线
+    mkdir -p /usr/local/etc/xray
+    tmp="${XRAY_CONFIG_FILE%.json}.tmp.json"
+    _render_xray_to "$new_uuid" "$new_ws_path" "$tmp" || die "新 Xray 配置校验失败，未做任何更改"
+    if ! deploy_final_nginx_inplace "$new_ws_path"; then
+        rm -f "$tmp"
+        die "新 Nginx 配置校验失败，未做任何更改"
+    fi
+    # nginx 已切到新路径：启用新的 Xray 配置、记录到 server.json，再重启 Xray
+    mv "$tmp" "${XRAY_CONFIG_FILE}"
     json_set "${SERVER_CFG}" \
         ".uuid = \"${new_uuid}\" | .ws_path = \"${new_ws_path}\""
-
-    # 重新渲染 Xray 和 nginx
-    _render_xray
-    deploy_final_nginx_inplace
     restart_service xray
 
     log_done "已重新生成 UUID 和 WS 路径"
@@ -342,17 +359,25 @@ cmd_fw_list() {
     echo ""
 }
 
+# 把防火墙规则写回 /etc/nftables.conf：只导出本工具管理的 inet filter 表（与安装时生成的文件结构一致），
+# 不把其他软件（如 Docker、fail2ban）的规则和动态内容一起固化进去；先写临时文件再改名，断电不会留下半个文件
+_save_fw_rules() {
+    local tmp=/etc/nftables.conf.tmp
+    {
+        echo '#!/usr/sbin/nft -f'
+        echo 'flush ruleset'
+        nft list table inet filter
+    } > "$tmp" || { rm -f "$tmp"; die "导出防火墙规则失败，/etc/nftables.conf 未改动"; }
+    mv -f "$tmp" /etc/nftables.conf
+}
+
 cmd_fw_add() {
     local port="$1" proto="${2:-tcp}"
     [[ "$port" =~ ^[0-9]+$ ]] || die "无效端口"
     [[ "$proto" == "tcp" || "$proto" == "udp" ]] || die "协议只能是 tcp 或 udp"
     is_service_active nftables || die "nftables 未启用"
     nft add rule inet filter input ${proto} dport ${port} accept comment "\"user-added\""
-    nft list ruleset > /etc/nftables.conf.new
-    echo '#!/usr/sbin/nft -f' > /etc/nftables.conf
-    echo 'flush ruleset' >> /etc/nftables.conf
-    cat /etc/nftables.conf.new >> /etc/nftables.conf
-    rm -f /etc/nftables.conf.new
+    _save_fw_rules
     log_done "已放行 ${port}/${proto}"
 }
 
@@ -365,11 +390,7 @@ cmd_fw_del() {
         awk -v p="$port" -v pr="$proto" '$0 ~ pr " dport " p " " {print $NF}' | head -1)
     [[ -n "$handle" ]] || { log_warn "未找到匹配规则"; return; }
     nft delete rule inet filter input handle "$handle"
-    nft list ruleset > /etc/nftables.conf.new
-    echo '#!/usr/sbin/nft -f' > /etc/nftables.conf
-    echo 'flush ruleset' >> /etc/nftables.conf
-    cat /etc/nftables.conf.new >> /etc/nftables.conf
-    rm -f /etc/nftables.conf.new
+    _save_fw_rules
     log_done "已删除规则 ${port}/${proto}"
 }
 
@@ -403,8 +424,36 @@ EOF
 
 cmd_upgrade() {
     require_root
-    bash /opt/rproxy-server/install.sh upgrade 2>/dev/null \
-        || bash <(curl -fsSL "${RAW_URL}/install.sh") upgrade
+    # 优先用 GitHub 上最新 Release 对应 tag 的 install.sh 与 common.sh（与每日更新一致，不取 main 上未发布的脚本）；
+    # 下载失败时由用户决定是否改用本机保存的 install.sh（安装或上次升级时留下的，可能较旧），默认不用。
+    # 选定一份脚本后只运行这一份：它失败退出（含"自检不通过、已自动回滚"）时不再换另一份脚本重新升级
+    local tag tmp_dir reason rc=0
+    tag=$(get_latest_release_tag)
+    if [[ -n "$tag" ]]; then
+        local raw="https://raw.githubusercontent.com/${REPO_SLUG}/${tag}/server"
+        tmp_dir=$(mktemp -d)
+        mkdir -p "${tmp_dir}/scripts"
+        if curl -fsSL --max-time 60 "${raw}/install.sh" -o "${tmp_dir}/install.sh" \
+            && curl -fsSL --max-time 60 "${raw}/scripts/common.sh" -o "${tmp_dir}/scripts/common.sh"; then
+            bash "${tmp_dir}/install.sh" upgrade "$tag" || rc=$?
+            rm -rf "$tmp_dir"
+            return $rc
+        fi
+        rm -rf "$tmp_dir"
+        reason="从 GitHub 下载 ${tag} 的升级脚本失败"
+    else
+        reason="无法从 GitHub 查询最新版本"
+    fi
+
+    log_warn "${reason}（请检查网络，必要时先 export https_proxy=http://代理:端口 再试）"
+    [[ -f /opt/rproxy-server/install.sh ]] || die "本机也没有保存的 install.sh，无法升级"
+    local ans
+    ans=$(ask "是否改用本机保存的 install.sh（安装或上次升级时留下的，可能较旧）继续升级？(yes/no) [默认 no]: " "no")
+    if [[ "$ans" != "yes" ]]; then
+        log_info "已取消升级，系统未做任何改动"
+        return 0
+    fi
+    bash /opt/rproxy-server/install.sh upgrade
 }
 
 # xray-autoupdate [on|off]：开关 Xray 自动更新，不带参数显示当前状态

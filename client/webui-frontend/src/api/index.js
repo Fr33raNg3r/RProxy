@@ -29,7 +29,12 @@ async function request(url, options = {}) {
       }
       throw new Error('请先修改默认密码')
     }
-    if (!resp.ok) throw new Error(data.error || '请求失败')
+    if (!resp.ok) {
+      const err = new Error(data.error || '请求失败')
+      // 附带完整响应，调用方可取其中的其他字段（如紧急停止 / 恢复脚本的输出）
+      err.data = data
+      throw err
+    }
     return data
   }
   if (!resp.ok) throw new Error(await resp.text())

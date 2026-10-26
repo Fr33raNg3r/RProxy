@@ -148,7 +148,9 @@ normalize_release_tag() {
 # ---------- SSH 端口检测 ----------
 get_ssh_port() {
     local port
-    if [[ -f /etc/ssh/sshd_config ]]; then
+    # 优先用 sshd -T 读实际生效的配置（含 sshd_config.d/ 下的文件）
+    port=$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}')
+    if [[ -z "$port" && -f /etc/ssh/sshd_config ]]; then
         port=$(grep -E '^\s*Port\s+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -1)
     fi
     if [[ -z "$port" ]]; then

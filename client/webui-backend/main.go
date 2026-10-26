@@ -8,6 +8,7 @@
 //	webui switch-next-node   - 切换到下一个启用节点（watchdog 调用）
 //	webui failback-check     - 探测排在前面的节点，恢复后回切（watchdog 调用）
 //	webui dns-check          - 检查本机 mosdns 能否应答（watchdog 调用）
+//	webui sync-dns-nft       - 把 DNS 上游的 IP 同步到 nftables（nftables 重载后由 load-static-ips 服务调用）
 package main
 
 import (
@@ -36,6 +37,7 @@ func usage() {
   webui switch-next-node   切换到下一个启用的节点
   webui failback-check     探测排在前面的节点，恢复后自动回切
   webui dns-check          检查本机 mosdns 能否应答（失败退出码 1）
+  webui sync-dns-nft       把 DNS 上游的 IP 同步到 nftables（国内上游 → cn_ips，国外上游 → force_proxy_ips）
   webui version            打印版本号
 `, Version)
 }
@@ -65,6 +67,8 @@ func main() {
 		runFailbackCheck()
 	case "dns-check":
 		runDNSCheck()
+	case "sync-dns-nft":
+		runSyncDNSNft()
 	case "version":
 		fmt.Println(Version)
 	case "-h", "--help", "help":
@@ -180,6 +184,20 @@ func runDNSCheck() {
 	}
 	fmt.Fprintln(os.Stderr, "本机 DNS 无应答:", err)
 	os.Exit(1)
+}
+
+// runSyncDNSNft 重启、nftables 重载都会把集合恢复成 nftables.conf 里预置的内容，
+// WebUI 保存上游时同步进去的 IP 随之丢失：由 load-static-ips 服务在每次加载规则后重新同步
+func runSyncDNSNft() {
+	u, err := config.LoadDNSUpstreams()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "读取 DNS 上游配置失败:", err)
+		os.Exit(1)
+	}
+	if err := services.SyncDNSToNftables(u); err != nil {
+		fmt.Fprintln(os.Stderr, "同步 DNS 上游到 nftables 失败:", err)
+		os.Exit(1)
+	}
 }
 
 func runSwitchNextNode() {

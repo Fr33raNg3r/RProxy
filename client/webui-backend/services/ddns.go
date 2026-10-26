@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -83,11 +84,29 @@ func fetchWANIP(urls []string) (string, error) {
 			continue
 		}
 		if ip := extractIPv4(string(body)); ip != "" {
+			if nodeIPs()[ip] {
+				// 这次查询走了代理（接口的 IP 不在 cn_ips 里），取到的是 VPS 的出口 IP，不能写进 DDNS
+				lastErr = fmt.Errorf("%s 返回的 %s 是节点 VPS 的地址（查询请求走了代理）", u, ip)
+				continue
+			}
 			return ip, nil
 		}
 		lastErr = fmt.Errorf("%s 返回内容里没有 IPv4", u)
 	}
 	return "", fmt.Errorf("获取 WAN IP 失败: %v", lastErr)
+}
+
+// nodeIPs 各节点 VPS 的 IP：取自生成 Xray 配置时记下的域名解析结果（resolve-cache.json）
+func nodeIPs() map[string]bool {
+	cache := map[string]string{}
+	if b, err := os.ReadFile(resolveCachePath); err == nil {
+		_ = json.Unmarshal(b, &cache)
+	}
+	ips := make(map[string]bool, len(cache))
+	for _, ip := range cache {
+		ips[ip] = true
+	}
+	return ips
 }
 
 // syncRecords 对每条填写完整的记录：IP 没变就跳过，变了就调用 upsert。

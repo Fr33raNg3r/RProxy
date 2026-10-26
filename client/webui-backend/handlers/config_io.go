@@ -160,6 +160,8 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 	cfg.UpdateHour = bundle.WebUI.UpdateHour
 	cfg.UpdateMinute = bundle.WebUI.UpdateMinute
 	cfg.CurrentNodeID = bundle.WebUI.CurrentNodeID
+	// 当前节点由导入文件指定：清掉故障转移标记，否则之后会被自动回切到别的节点
+	cfg.AutoSwitched = false
 	cfg.WGEnabled = bundle.WebUI.WGEnabled
 	cfg.WGListenPort = bundle.WebUI.WGListenPort
 	cfg.WGSubnet = bundle.WebUI.WGSubnet
@@ -220,9 +222,17 @@ func ImportConfig(w http.ResponseWriter, r *http.Request) {
 		go services.RunDDNSNow()
 	}
 	if bundle.DNS != nil {
-		_ = services.RunCmdErr(services.CmdTimeoutLong, "systemctl", "restart", "rproxy-gw-mosdns")
+		// 新上游的 IP 同步到 nftables（国内上游 → cn_ips，国外上游 → force_proxy_ips），与 DNS 页保存时一致
+		if err := services.SyncDNSToNftables(*bundle.DNS); err != nil {
+			warnings = append(warnings, "同步 nftables 部分失败: "+err.Error())
+		}
+		if err := services.RestartMosdns(); err != nil {
+			warnings = append(warnings, "重启 mosdns 失败: "+err.Error())
+		}
 	}
-	_ = services.RestartXray()
+	if err := services.RestartXray(); err != nil {
+		warnings = append(warnings, "重启 Xray 失败: "+err.Error())
+	}
 
 	resp := map[string]interface{}{
 		"ok":         true,
@@ -272,6 +282,15 @@ func validateImportBundle(b *ClientConfigBundle) error {
 	}
 	if wu.UpdateMinute < 0 || wu.UpdateMinute > 59 {
 		return fmt.Errorf("update_minute 无效")
+	}
+
+	// DNS 上游与 WebUI 保存时同样校验（写法有误会让 mosdns 起不来），通过后去掉空行
+	if b.DNS != nil {
+		if err := validateDNSUpstreams(*b.DNS, localIPv4s()); err != nil {
+			return fmt.Errorf("DNS 上游校验失败: %v", err)
+		}
+		b.DNS.Local = cleanUpstreamList(b.DNS.Local)
+		b.DNS.Remote = cleanUpstreamList(b.DNS.Remote)
 	}
 
 	// DDNS 配置整理成固定三条并校验（格式不对整体拒绝，避免写入一半）

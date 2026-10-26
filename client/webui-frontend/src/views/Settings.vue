@@ -98,7 +98,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, h } from 'vue'
 import { useDialog } from 'naive-ui'
 import { api } from '../api'
 
@@ -156,6 +156,8 @@ async function onImportFile(e) {
           const text = await file.text()
           const r = await api.importConfig(text)
           importResult.value = `导入完成：节点 ${r.node_count} 个${r.dns ? '，DNS 配置已替换' : ''}${r.wg_peers ? '，WireGuard peers 已替换' : ''}${r.ddns ? '，DDNS 配置已替换' : ''}`
+          // 配置已写入，但部分服务没能生效（如 Xray / mosdns 重启失败）
+          if (r.warning) error.value = '导入已完成，但有问题需要处理：' + r.warning
           success.value = '配置已导入'
           setTimeout(() => success.value = '', 5000)
         } catch (e) {
@@ -294,7 +296,7 @@ function emergencyStop() {
         success.value = '透明代理已停止'
         setTimeout(() => success.value = '', 5000)
       } catch (e) {
-        error.value = e.message
+        showScriptFailure('紧急停止失败', e)
       } finally {
         stopping.value = false
       }
@@ -318,11 +320,23 @@ function emergencyResume() {
         success.value = '透明代理已恢复'
         setTimeout(() => success.value = '', 5000)
       } catch (e) {
-        error.value = e.message
+        showScriptFailure('恢复透明代理失败', e)
       } finally {
         resuming.value = false
       }
     }
+  })
+}
+
+// 紧急停止 / 恢复失败时弹框显示脚本输出：失败原因（如"Xray 启动失败，已撤回，仍处于紧急停止状态"）在输出里，
+// 错误信息本身只有"exit status 1"
+function showScriptFailure(title, e) {
+  const output = (e.data && e.data.output || '').trim()
+  dialog.error({
+    title,
+    content: () => h('pre', { style: 'white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 50vh; overflow: auto;' },
+      output || e.message),
+    positiveText: '知道了'
   })
 }
 

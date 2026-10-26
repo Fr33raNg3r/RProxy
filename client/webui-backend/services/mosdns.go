@@ -4,6 +4,9 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
 	"text/template"
 	"time"
 
@@ -16,16 +19,37 @@ var mosdnsConfigTpl string
 // RenderMosdnsConfig 根据 DNS 上游配置渲染 mosdns config.yaml。
 // 写入是原子的（写 .tmp 再 rename）。不重启 mosdns——由调用者决定。
 func RenderMosdnsConfig(u config.DNSUpstreams) error {
-	tpl, err := template.New("mosdns").Parse(mosdnsConfigTpl)
+	b, err := renderMosdnsBytes(u)
 	if err != nil {
-		return fmt.Errorf("解析 mosdns 模板: %w", err)
+		return err
+	}
+	return config.WriteFileAtomic(config.MosdnsConfigPath, b, 0644)
+}
+
+func renderMosdnsBytes(u config.DNSUpstreams) ([]byte, error) {
+	tpl, err := template.New("mosdns").Funcs(template.FuncMap{"hostIsDomain": upstreamHostIsDomain}).Parse(mosdnsConfigTpl)
+	if err != nil {
+		return nil, fmt.Errorf("解析 mosdns 模板: %w", err)
 	}
 
 	var buf bytes.Buffer
 	if err := tpl.Execute(&buf, u); err != nil {
-		return fmt.Errorf("渲染 mosdns 模板: %w", err)
+		return nil, fmt.Errorf("渲染 mosdns 模板: %w", err)
 	}
-	return config.WriteFileAtomic(config.MosdnsConfigPath, buf.Bytes(), 0644)
+	return buf.Bytes(), nil
+}
+
+// upstreamHostIsDomain 上游的主机部分是域名（不是 IP）时为 true：这类上游需要 bootstrap 来解析自身的域名
+func upstreamHostIsDomain(addr string) bool {
+	if !strings.Contains(addr, "://") {
+		addr = "udp://" + addr
+	}
+	u, err := url.Parse(addr)
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	return h != "" && net.ParseIP(h) == nil
 }
 
 // RestartMosdns 重启 mosdns 并校验 2 秒后仍在运行。

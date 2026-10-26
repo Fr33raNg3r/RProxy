@@ -333,6 +333,8 @@ function startSSE() {
     if (sse) {
       sse.close()
       sse = null
+      // EventSource 拿不到 HTTP 状态码：登录已失效时请求一次接口，由 api 层跳回登录页，否则会一直重连
+      api.getStatus().catch(() => {})
       setTimeout(startSSE, 5000)
     }
   }
@@ -422,8 +424,13 @@ async function saveNode() {
         success.value = r.proxy_ok ? '节点已更新，代理连通' : '节点已更新'
       }
     } else {
-      await api.createNode(payload)
-      success.value = '节点已添加'
+      const r = await api.createNode(payload)
+      // 节点已保存，但设为当前节点或重启 Xray 时出了问题，后端放在 warning 里
+      if (r.warning) {
+        error.value = r.warning
+      } else {
+        success.value = r.message || '节点已添加'
+      }
     }
     closeModal()
     await loadNodes()

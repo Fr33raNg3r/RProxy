@@ -156,12 +156,15 @@ cmd_list() {
 }
 
 write_alert() {
+    # 转义反斜杠和双引号：原因文字里出现时 JSON 不会损坏
+    local m="${1//\\/\\\\}"
+    m="${m//\"/\\\"}"
     mkdir -p "$(dirname "${ALERT_FILE}")"
     cat > "${ALERT_FILE}" <<EOF
 {
   "active": true,
   "time": "$(date '+%Y-%m-%d %H:%M:%S')",
-  "message": "$1"
+  "message": "${m}"
 }
 EOF
 }

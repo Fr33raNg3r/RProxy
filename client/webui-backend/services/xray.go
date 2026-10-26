@@ -339,29 +339,55 @@ func SwitchToNextNode() error {
 	}
 	nextID := nodes[sorted[nextIdx]].ID
 
-	cfg.AutoSwitched = true // 自动故障转移：前面的节点恢复后允许回切
-	return applyNodeSwitch(cfg, nodes, nextID)
+	// 自动故障转移：前面的节点恢复后允许回切
+	return ApplyNodeSwitch(nodes, nextID, true)
 }
 
-// applyNodeSwitch 切换到指定节点：同步 Enabled、保存配置、渲染并重启 Xray
-// 调用前应已设置好 cfg.AutoSwitched
-func applyNodeSwitch(cfg *config.WebUIConfig, nodes []config.Node, nextID string) error {
-	// 同步 Enabled：只有 next 是 true
-	for i := range nodes {
-		nodes[i].Enabled = nodes[i].ID == nextID
-	}
-	if err := config.SaveNodes(nodes); err != nil {
-		return err
-	}
+// 切换节点的各步骤（测试中可替换）
+var (
+	renderXray  = RenderXrayConfig
+	loadWebUI   = config.LoadWebUIConfig
+	loadNodes   = config.LoadNodes
+	saveNodes   = config.SaveNodes
+	saveWebUI   = config.SaveWebUIConfig
+	restartXray = RestartXray
+)
 
+// ApplyNodeSwitch 切换到指定节点：渲染并校验配置、同步 Enabled、保存配置、重启 Xray。
+// autoSwitched 为 true 表示由故障转移 / 回切自动切换（前面的节点恢复后允许回切），手动切换传 false。
+// 先渲染再保存：新配置没通过 xray -test 时什么都不改，避免 current_node_id 指向新节点而 Xray 仍跑旧配置。
+// 渲染要几秒，期间 WebUI 可能改过配置（webui 子命令与 WebUI 是不同进程，进程内的锁管不到）：
+// 写回前重读最新的 webui.json 与 nodes.json，只改当前节点相关字段，不把切换开始时读到的旧内容整体写回
+func ApplyNodeSwitch(nodes []config.Node, nextID string, autoSwitched bool) error {
+	if err := renderXray(nodes, nextID); err != nil {
+		return err
+	}
+	freshNodes, err := loadNodes()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range freshNodes {
+		// 同步 Enabled：只有 next 是 true
+		freshNodes[i].Enabled = freshNodes[i].ID == nextID
+		found = found || freshNodes[i].ID == nextID
+	}
+	if !found {
+		return errors.New("目标节点已被删除，放弃切换")
+	}
+	cfg, err := loadWebUI()
+	if err != nil {
+		return err
+	}
+	if err := saveNodes(freshNodes); err != nil {
+		return err
+	}
 	cfg.CurrentNodeID = nextID
-	if err := config.SaveWebUIConfig(cfg); err != nil {
+	cfg.AutoSwitched = autoSwitched
+	if err := saveWebUI(cfg); err != nil {
 		return err
 	}
-	if err := RenderXrayConfig(nodes, cfg.CurrentNodeID); err != nil {
-		return err
-	}
-	return RestartXray()
+	return restartXray()
 }
 
 // RestartXray 重启 Xray 服务，并验证 2 秒后仍在运行

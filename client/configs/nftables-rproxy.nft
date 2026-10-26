@@ -198,7 +198,8 @@ table inet tp {
 table ip tp_nat {
     chain postrouting {
         type nat hook postrouting priority srcnat; policy accept;
-        # 来自 WG 子网且经物理网卡出去的，做 MASQUERADE
-        ip saddr 172.16.7.0/24 oifname != "wg0" masquerade
+        # 从 wg0 进来、经物理网卡出去的，做 MASQUERADE
+        # 按网卡匹配而不写死子网：导入配置改了 WG 子网后规则不必跟着改
+        iifname "wg0" oifname != "wg0" masquerade
     }
 }

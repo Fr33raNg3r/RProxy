@@ -62,6 +62,13 @@ func CreateNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodes = append(nodes, n)
+	// 首个节点会立即启用：先渲染校验再保存，配置不合法时不添加，避免 current_node_id 指向它而 Xray 仍是直连配置
+	if firstActive {
+		if err := services.RenderXrayConfig(nodes, n.ID); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorMsg("节点配置未通过 Xray 校验，未添加: "+err.Error()))
+			return
+		}
+	}
 	if err := config.SaveNodes(nodes); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return
@@ -74,14 +81,6 @@ func CreateNode(w http.ResponseWriter, r *http.Request) {
 				"ok":      true,
 				"node":    n,
 				"warning": "节点已添加，但保存当前节点 ID 失败: " + err.Error(),
-			})
-			return
-		}
-		if err := services.RenderXrayConfig(nodes, n.ID); err != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"ok":      true,
-				"node":    n,
-				"warning": "节点已添加并自动设为当前节点，但 Xray 配置渲染失败: " + err.Error(),
 			})
 			return
 		}
@@ -139,17 +138,20 @@ func UpdateNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorMsg("节点不存在"))
 		return
 	}
+	// 如果修改的是当前节点，需要重新渲染并重启；先渲染校验再保存，修改后的配置不合法时不保存
+	cfg, _ := config.LoadWebUIConfig()
+	isCurrent := cfg != nil && cfg.CurrentNodeID == id
+	if isCurrent {
+		if err := services.RenderXrayConfig(nodes, id); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染配置失败，修改未保存: "+err.Error()))
+			return
+		}
+	}
 	if err := config.SaveNodes(nodes); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return
 	}
-	// 如果修改的是当前节点，需要重新渲染并重启
-	cfg, _ := config.LoadWebUIConfig()
-	if cfg != nil && cfg.CurrentNodeID == id {
-		if err := services.RenderXrayConfig(nodes, id); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染配置失败: "+err.Error()))
-			return
-		}
+	if isCurrent {
 		if err := services.RestartXray(); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
 			return
@@ -175,15 +177,15 @@ func DeleteNode(w http.ResponseWriter, r *http.Request) {
 			newNodes = append(newNodes, n)
 		}
 	}
-	if err := config.SaveNodes(newNodes); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
-		return
-	}
-	// 如果删除的是当前节点，按 order 选一个新的作为 current
 	cfg, _ := config.LoadWebUIConfig()
-	if cfg != nil && cfg.CurrentNodeID == id {
-		cfg.CurrentNodeID = ""
-		// 按 order 选第一个剩余节点
+	if cfg == nil || cfg.CurrentNodeID != id {
+		if err := config.SaveNodes(newNodes); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
+			return
+		}
+	} else {
+		// 删除的是当前节点：按 order 选第一个剩余节点作为 current（没有则为空）
+		nextID := ""
 		nextIdx := -1
 		for i := range newNodes {
 			if nextIdx == -1 || newNodes[i].Order < newNodes[nextIdx].Order {
@@ -191,8 +193,14 @@ func DeleteNode(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if nextIdx >= 0 {
-			cfg.CurrentNodeID = newNodes[nextIdx].ID
+			nextID = newNodes[nextIdx].ID
 		}
+		// 先渲染校验再保存：新配置不合法时不删除，避免 Xray 仍跑着已被删除的节点
+		if err := services.RenderXrayConfig(newNodes, nextID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 Xray 配置失败，节点未删除: "+err.Error()))
+			return
+		}
+		cfg.CurrentNodeID = nextID
 		// 同步 Enabled
 		for i := range newNodes {
 			newNodes[i].Enabled = newNodes[i].ID == cfg.CurrentNodeID
@@ -203,10 +211,6 @@ func DeleteNode(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := config.SaveWebUIConfig(cfg); err != nil {
 			writeJSON(w, http.StatusInternalServerError, errorMsg("保存当前节点 ID 失败: "+err.Error()))
-			return
-		}
-		if err := services.RenderXrayConfig(newNodes, cfg.CurrentNodeID); err != nil {
-			writeJSON(w, http.StatusInternalServerError, errorMsg("渲染 Xray 配置失败: "+err.Error()))
 			return
 		}
 		if err := services.RestartXray(); err != nil {
@@ -236,31 +240,9 @@ func SwitchNode(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorMsg("节点不存在"))
 		return
 	}
-	// 同步 Enabled：只有目标节点是 true
-	for i := range nodes {
-		nodes[i].Enabled = nodes[i].ID == id
-	}
-	if err := config.SaveNodes(nodes); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
-		return
-	}
-	cfg, err := config.LoadWebUIConfig()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
-		return
-	}
-	cfg.CurrentNodeID = id
-	cfg.AutoSwitched = false // 手动切换：不再自动回切
-	if err := config.SaveWebUIConfig(cfg); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
-		return
-	}
-	if err := services.RenderXrayConfig(nodes, id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg("渲染配置失败: "+err.Error()))
-		return
-	}
-	if err := services.RestartXray(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, errorMsg("重启 Xray 失败: "+err.Error()))
+	// 手动切换：不再自动回切；先渲染校验再保存，新节点配置不合法时不改动当前节点
+	if err := services.ApplyNodeSwitch(nodes, id, false); err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorMsg("切换节点失败: "+err.Error()))
 		return
 	}
 	// 切换过程里立即探测一次（约 2～8 秒），结果随响应返回并同步到状态页；不通也保持在新节点

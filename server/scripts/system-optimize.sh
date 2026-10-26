@@ -162,6 +162,22 @@ EOF
 
 # ---------------- 回滚到 Debian 默认内核 ----------------
 
+# set_grub_default_kernel <内核版本>：把 GRUB 默认启动项设为该内核（写成"子菜单标题>菜单项标题"），找不到返回 1
+set_grub_default_kernel() {
+    local ver="$1" cfg=/boot/grub/grub.cfg sub entry
+    [[ -f "$cfg" ]] || return 1
+    sub=$(sed -n "s/^submenu '\([^']*\)'.*/\1/p" "$cfg" | head -n 1)
+    # 菜单项标题以 "with Linux <版本>" 结尾（排除 recovery mode 那一项）
+    entry=$(awk -v v="with Linux ${ver}" -F"'" '/^[[:space:]]*menuentry / && substr($2, length($2) - length(v) + 1) == v {print $2; exit}' "$cfg")
+    [[ -n "$sub" && -n "$entry" ]] || return 1
+    if grep -q '^GRUB_DEFAULT=' /etc/default/grub; then
+        sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${sub}>${entry}\"|" /etc/default/grub
+    else
+        echo "GRUB_DEFAULT=\"${sub}>${entry}\"" >> /etc/default/grub
+    fi
+    update-grub
+}
+
 action_rollback_kernel() {
     log_step "回滚到 Debian 默认内核"
 
@@ -185,14 +201,38 @@ action_rollback_kernel() {
     fi
     log_info "找到 Debian 内核：$debian_kernel"
 
+    # 正在运行的内核不能卸载（apt 会拒绝）：先把 GRUB 默认启动项改成 Debian 内核，重启后再执行一次回滚完成卸载
+    if uname -r | grep -q "zabbly"; then
+        if ! set_grub_default_kernel "${debian_kernel#linux-image-}"; then
+            log_error "在 GRUB 菜单里找不到 Debian 内核，请重启时在 GRUB 菜单的「Advanced options」里手动选择 ${debian_kernel#linux-image-}，启动后再执行回滚"
+            return 1
+        fi
+        log_done "已将 GRUB 默认启动项设为 Debian 内核 ${debian_kernel#linux-image-}"
+        echo ""
+        echo "  当前正在运行 Zabbly 内核，系统不允许卸载正在运行的内核。"
+        echo "  请重启进入 Debian 内核后，再次执行「回滚内核」完成卸载。"
+        echo ""
+        ans=$(ask "  现在重启？(yes/no): ")
+        if [[ "$ans" == "yes" ]]; then
+            log_info "5 秒后重启..."
+            sleep 5
+            reboot
+        fi
+        return 0
+    fi
+
     log_step "卸载 Zabbly 内核包"
     apt-get purge -y 'linux-image-*zabbly*' linux-zabbly 2>/dev/null || true
+    if dpkg -l 2>/dev/null | grep -q '^ii.*zabbly'; then
+        die "Zabbly 内核包未能全部卸载，请检查：dpkg -l | grep zabbly"
+    fi
 
     log_step "删除 Zabbly 仓库"
     rm -f /etc/apt/sources.list.d/zabbly-kernel-stable.sources
     rm -f /etc/apt/keyrings/zabbly.asc
 
-    log_step "更新 GRUB"
+    log_step "更新 GRUB（恢复默认启动最新内核）"
+    sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT=0/' /etc/default/grub
     update-grub
 
     log_step "刷新 apt 列表"

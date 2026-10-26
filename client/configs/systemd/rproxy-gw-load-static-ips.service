@@ -9,6 +9,8 @@ PartOf=nftables.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/opt/rproxy-gw/scripts/load-static-ips.sh
+# DNS 上游的 IP（WebUI 保存上游时写入）同样随规则重载丢失，一并重新同步；失败（如开机时网络未就绪、解析不到 DoH 域名）不影响本服务
+ExecStart=-/opt/rproxy-gw/bin/webui sync-dns-nft
 
 [Install]
 WantedBy=multi-user.target nftables.service

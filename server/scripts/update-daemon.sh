@@ -21,14 +21,16 @@ log_to_file "================ 开始每日更新 ================"
 # ---------- 1. 检查脚本自身版本 ----------
 check_self_update() {
     log_to_file "检查 RProxy 服务端 自身版本"
-    local local_ver remote_ver
+    local local_ver remote_ver tag
     local_ver=$(cat "${INSTALL_DIR}/VERSION")
-    # VERSION 在仓库根目录，RAW_URL 末尾带 /server，需去掉末段路径再取根目录的 VERSION
-    remote_ver=$(curl -fsSL --max-time 30 "${RAW_URL%/*}/VERSION" | tr -d '[:space:]')
-    if [[ -z "$remote_ver" ]]; then
-        log_to_file "无法获取远端版本，跳过自我升级"
+    # 以 GitHub 上最新的 Release 为准，不看 main 分支的 VERSION：
+    # main 改了版本号但 Release 还没发布成功时，不会每天"升级"到同一个旧版本、重启一遍服务
+    tag=$(get_latest_release_tag)
+    if [[ -z "$tag" ]]; then
+        log_to_file "无法获取最新发布版本，跳过自我升级"
         return 1
     fi
+    remote_ver="${tag#v}"
     log_to_file "本地版本：${local_ver}    远端版本：${remote_ver}"
     # 升级后曾自动回滚的版本：不再自动升级，等发布更新的版本（手动升级不受限制）
     local held
@@ -39,20 +41,26 @@ check_self_update() {
     fi
     if [[ "$local_ver" != "$remote_ver" ]]; then
         log_to_file "发现新版本，开始升级"
-        local tmp_install
-        tmp_install=$(mktemp)
-        if curl -fsSL --max-time 60 "${RAW_URL}/install.sh" -o "$tmp_install"; then
-            chmod +x "$tmp_install"
-            # RPROXY_AUTO_UPGRADE=1：告知 install.sh 本次是自动升级，需遵守 Xray 自动更新开关
-            if RPROXY_AUTO_UPGRADE=1 bash "$tmp_install" upgrade >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1; then
+        # 取该 Release 对应 tag 的 install.sh 与 common.sh（不取 main，避免用未发布的脚本装旧产物），
+        # 放在同一目录下让 install.sh 用这份 common.sh，并把 tag 传给它下载对应产物
+        local tmp_dir raw="https://raw.githubusercontent.com/${REPO_SLUG}/${tag}/server"
+        tmp_dir=$(mktemp -d)
+        mkdir -p "${tmp_dir}/scripts"
+        if curl -fsSL --max-time 60 "${raw}/install.sh" -o "${tmp_dir}/install.sh" \
+            && curl -fsSL --max-time 60 "${raw}/scripts/common.sh" -o "${tmp_dir}/scripts/common.sh"; then
+            # RPROXY_AUTO_UPGRADE=1：告知 install.sh 本次是自动升级，需遵守 Xray 自动更新开关，且已持有更新锁
+            if RPROXY_AUTO_UPGRADE=1 bash "${tmp_dir}/install.sh" upgrade "$tag" >>"${LOG_DIR}/$(date +%Y%m%d).log" 2>&1; then
                 log_to_file "自我升级完成"
             else
-                log_to_file "自我升级失败（升级流程会自动回滚到升级前快照，详见上方日志）"
+                log_to_file "自我升级失败（升级流程会自动回滚到升级前快照，详见上方日志），继续本次的其他更新"
+                rm -rf "$tmp_dir"
+                return 1
             fi
-            rm -f "$tmp_install"
+            rm -rf "$tmp_dir"
             return 0
         else
-            log_to_file "下载新 install.sh 失败"
+            log_to_file "下载 ${tag} 的 install.sh 失败"
+            rm -rf "$tmp_dir"
             return 1
         fi
     fi

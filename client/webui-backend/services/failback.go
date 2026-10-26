@@ -17,7 +17,7 @@ import (
 
 const (
 	failbackSocksPort = 10810 // 探测用临时 Xray 的 SOCKS 端口（主 Xray 用 10808）
-	failbackNeed      = 3     // 连续探测成功多少次才回切（watchdog 每分钟一次，约 3 分钟）
+	failbackNeed      = 3     // 连续探测成功多少次才回切（只在代理探测成功后检查，间隔 200～600 秒，约 10～30 分钟）
 )
 
 // failbackState 是 data/failback.json：每个节点的连续探测成功次数
@@ -199,7 +199,7 @@ func saveFailbackState(s failbackState) error {
 	return config.WriteFileAtomic(config.FailbackState, b, 0644)
 }
 
-// FailbackCheck 由 watchdog 每分钟调用（仅在代理正常时）。
+// FailbackCheck 由 watchdog 在每次代理探测成功后调用（间隔 200～600 秒，见 watchdog.sh 的 next_probe_delay）。
 // 只有当前节点是自动故障转移切到的、并且前面还有更优先的节点时才会探测；
 // 前面的节点连续探测成功 failbackNeed 次后，切回其中 Order 最靠前的。
 // 返回非空字符串表示发生了切换。
@@ -244,8 +244,7 @@ func FailbackCheck() (string, error) {
 	}
 
 	// 切回目标节点；若前面还有更优先的节点，保持 AutoSwitched 以便继续回切
-	fresh.AutoSwitched = len(nodesBefore(freshNodes, target.ID)) > 0
-	if err := applyNodeSwitch(fresh, freshNodes, target.ID); err != nil {
+	if err := ApplyNodeSwitch(freshNodes, target.ID, len(nodesBefore(freshNodes, target.ID)) > 0); err != nil {
 		return "", err
 	}
 	_ = saveFailbackState(failbackState{Streaks: map[string]int{}})

@@ -270,15 +270,33 @@ interactive_firewall_setup() {
     fw_choice=$(ask "    请选择 [1-3，默认 1]: " "1")
 
     case "$fw_choice" in
-        2) deploy_firewall_minimal ;;
-        3) deploy_firewall_open_existing ;;
+        2) confirm_fw_ssh_port; deploy_firewall_minimal ;;
+        3) confirm_fw_ssh_port; deploy_firewall_open_existing ;;
         *) log_info "跳过防火墙配置" ;;
     esac
 }
 
+# 启用防火墙前让用户确认要放行的 SSH 端口：检测错了（如 SSH 用 socket 激活）会把自己锁在外面。
+# 结果存入 FW_SSH_PORT，供 deploy_firewall_* 使用
+confirm_fw_ssh_port() {
+    local detected in
+    detected=$(get_ssh_port)
+    echo ""
+    log_warn "防火墙将只放行 SSH 端口 ${detected}，端口不对会导致 SSH 无法登录！"
+    while true; do
+        in=$(ask "    检测到的 SSH 端口为 ${detected}，正确请直接回车，不正确请输入实际端口: " "$detected")
+        if [[ "$in" =~ ^[0-9]+$ ]] && (( in >= 1 && in <= 65535 )); then
+            FW_SSH_PORT="$in"
+            break
+        fi
+        log_warn "端口必须是 1-65535 之间的数字"
+    done
+    log_info "防火墙将放行 SSH 端口 ${FW_SSH_PORT}"
+}
+
 deploy_firewall_minimal() {
     local ssh_port
-    ssh_port=$(get_ssh_port)
+    ssh_port="${FW_SSH_PORT:-$(get_ssh_port)}"
     log_step "部署最小防火墙规则（443、80、SSH:${ssh_port}）"
     apt-get install -y --no-install-recommends nftables
     cat > /etc/nftables.conf <<EOF
@@ -310,7 +328,7 @@ EOF
 
 deploy_firewall_open_existing() {
     local ssh_port
-    ssh_port=$(get_ssh_port)
+    ssh_port="${FW_SSH_PORT:-$(get_ssh_port)}"
     log_step "部署防火墙（含当前所有监听端口）"
     apt-get install -y --no-install-recommends nftables
     local tcp_ports udp_ports
@@ -393,7 +411,11 @@ fetch_source() {
 
 install_xray() {
     log_step "通过官方一键脚本安装 Xray-core"
-    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    # 先下载再执行：写成 bash -c "$(curl ...)" 时下载失败只会得到空脚本、照样返回成功，安装继续往下走到后面才报错
+    local xray_installer
+    xray_installer=$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh) \
+        || die "Xray 官方安装脚本下载失败，请检查网络"
+    bash -c "$xray_installer" @ install
     log_done "Xray 安装完成：$(xray version | head -n 1)"
 }
 
@@ -674,6 +696,20 @@ upgrade_check_ok() {
     return 1
 }
 
+# upgrade_services_down <服务...>：等服务启动（最多约 10 秒），打印仍未运行的服务名，都在运行时输出为空
+upgrade_services_down() {
+    local i svc down
+    for i in 1 2 3 4 5; do
+        down=""
+        for svc in "$@"; do
+            is_service_active "$svc" || down+=" $svc"
+        done
+        [[ -z "$down" ]] && return 0
+        sleep 2
+    done
+    echo "${down# }"
+}
+
 # upgrade_auto_rollback <原因> <快照名>
 upgrade_auto_rollback() {
     log_error "$1，自动回滚到升级前快照 $2"
@@ -694,6 +730,12 @@ action_upgrade() {
     check_arch
     check_debian13
     is_installed || die "未检测到已有安装，请先全新安装"
+    # 与每日更新共用一把锁：手动升级与每日自动升级不能同时进行（共用构建目录、快照），watchdog 看到锁被占用也会跳过本轮。
+    # 每日更新调用本脚本前已持有这把锁（RPROXY_AUTO_UPGRADE=1），不再重复加
+    if [[ "${RPROXY_AUTO_UPGRADE:-}" != "1" ]]; then
+        exec 200>/var/run/rproxy-server-update.lock
+        flock -n 200 || die "已有升级或每日更新任务在运行，请稍后再试"
+    fi
 
     log_info "开始升级"
     # 升级时也确保 NTP 启用（旧版安装可能未开启）
@@ -710,6 +752,11 @@ action_upgrade() {
     # 升级前后用同一标准（含 XHTTP）自检：只看首页的话，XHTTP 升级前就坏了也会被算成"升级导致"而回滚并跳过该版本
     local pre_ok=0
     "$ROLLBACK_BIN" check --xhttp && pre_ok=1
+    # 升级前在运行的关键服务：升级后起不来就回滚（升级前自检不通过时也能发现问题）
+    local pre_active=() svc
+    for svc in xray nginx; do
+        is_service_active "$svc" && pre_active+=("$svc")
+    done
     log_step "创建升级前快照（出问题时可执行 rproxy-rollback 恢复）"
     UPGRADE_SNAPSHOT=$("$ROLLBACK_BIN" create "升级前 ${old_ver} → ${new_ver}") \
         || die "快照创建失败（多半是磁盘空间不足），为安全起见取消升级，系统未做改动"
@@ -754,6 +801,12 @@ action_upgrade() {
     # 升级前自检通过、升级后（含 XHTTP）不通过 → 整体回滚到升级前快照
     local snap="$UPGRADE_SNAPSHOT"
     UPGRADE_SNAPSHOT=""   # 后续不再由退出陷阱回滚
+    local down
+    down=$(upgrade_services_down "${pre_active[@]}")
+    if [[ -n "$down" ]]; then
+        upgrade_auto_rollback "升级到 ${new_ver} 后 ${down} 未能启动" "$snap"
+        exit 1
+    fi
     if [[ $pre_ok -eq 1 ]] && ! upgrade_check_ok; then
         upgrade_auto_rollback "升级到 ${new_ver} 后本机自检未通过" "$snap"
         exit 1
@@ -786,7 +839,12 @@ do_uninstall_silent() {
     done
 
     log_step "卸载 Xray"
-    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+    local xray_installer
+    if xray_installer=$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh); then
+        bash -c "$xray_installer" @ remove --purge 2>/dev/null || true
+    else
+        log_warn "Xray 官方脚本下载失败，跳过卸载 Xray（可稍后手动执行官方脚本的 remove --purge），继续删除其他文件"
+    fi
 
     log_step "卸载 acme.sh"
     if [[ -d "${ACME_HOME}" ]]; then

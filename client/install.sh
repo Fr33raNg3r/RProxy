@@ -337,7 +337,11 @@ install_xray() {
     log_step "通过官方一键脚本安装 Xray-core"
     # --without-logfiles：官方脚本会把 /var/log/xray 改成 xray:xray 700，
     # 而本项目以 root 运行且无 CAP_DAC_OVERRIDE，会因此打不开 log 起不来；日志目录由 ensure_xray_log_dir 自行管理
-    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install --without-logfiles
+    # 先下载再执行：写成 bash -c "$(curl ...)" 时下载失败只会得到空脚本、照样返回成功，安装继续往下走到后面才报错
+    local xray_installer
+    xray_installer=$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh) \
+        || die "Xray 官方安装脚本下载失败，请检查网络（国内可先 export https_proxy=http://代理:端口 再试）"
+    bash -c "$xray_installer" @ install --without-logfiles
     ensure_xray_log_dir
 
     # 关键修复：让 Xray 以 root 运行
@@ -705,6 +709,20 @@ upgrade_proxy_ok() {
     return 1
 }
 
+# upgrade_services_down <服务...>：等服务启动（最多约 10 秒），打印仍未运行的服务名，都在运行时输出为空
+upgrade_services_down() {
+    local i svc down
+    for i in 1 2 3 4 5; do
+        down=""
+        for svc in "$@"; do
+            is_service_active "$svc" || down+=" $svc"
+        done
+        [[ -z "$down" ]] && return 0
+        sleep 2
+    done
+    echo "${down# }"
+}
+
 # upgrade_auto_rollback <原因> <快照名>
 upgrade_auto_rollback() {
     log_error "$1，自动回滚到升级前快照 $2"
@@ -736,6 +754,12 @@ action_upgrade() {
     if [[ -f /run/rproxy-gw-emergency-stop ]]; then
         die "当前处于紧急停止状态，请先在 WebUI 点「紧急恢复」（或执行 ${SCRIPTS_DIR}/emergency-resume.sh）后再升级"
     fi
+    # 与每日更新共用一把锁：WebUI 一键升级、每日自动升级、SSH 手动升级不能同时进行（共用构建目录、快照），
+    # watchdog 看到锁被占用也会跳过本轮。每日更新调用本脚本前已持有这把锁（RPROXY_AUTO_UPGRADE=1），不再重复加
+    if [[ "${RPROXY_AUTO_UPGRADE:-}" != "1" ]]; then
+        exec 200>/var/run/rproxy-gw-update.lock
+        flock -n 200 || die "已有升级或每日更新任务在运行，请稍后再试"
+    fi
 
     # 升级时也确保 NTP 启用（旧版安装可能未开启）
     enable_ntp
@@ -753,6 +777,11 @@ action_upgrade() {
     install -m 755 "${BUILD_DIR}/scripts/rproxy-rollback" "$ROLLBACK_BIN"
     local pre_ok=0
     proxy_health_check 10808 && pre_ok=1
+    # 升级前在运行的关键服务：升级后起不来就回滚（只看本机，升级前代理不通时也能发现问题）
+    local pre_active=() svc
+    for svc in xray rproxy-gw-mosdns rproxy-gw-webui; do
+        is_service_active "$svc" && pre_active+=("$svc")
+    done
     log_step "创建升级前快照（出问题时可执行 rproxy-rollback 离线恢复）"
     UPGRADE_SNAPSHOT=$("$ROLLBACK_BIN" create "升级前 ${old_ver} → ${new_ver}") \
         || die "快照创建失败（多半是磁盘空间不足），为安全起见取消升级，系统未做改动"
@@ -907,6 +936,12 @@ action_upgrade() {
     # （升级前本来就不通则无法判断是不是升级造成的，不回滚）
     local snap="$UPGRADE_SNAPSHOT"
     UPGRADE_SNAPSHOT=""   # 后续不再由退出陷阱回滚
+    local down
+    down=$(upgrade_services_down "${pre_active[@]}")
+    if [[ -n "$down" ]]; then
+        upgrade_auto_rollback "升级到 ${new_ver} 后 ${down} 未能启动" "$snap"
+        exit 1
+    fi
     if [[ $pre_ok -eq 1 ]] && ! upgrade_proxy_ok; then
         upgrade_auto_rollback "升级到 ${new_ver} 后代理连不通" "$snap"
         exit 1
@@ -939,6 +974,7 @@ do_uninstall_silent() {
     for svc in rproxy-gw-update.timer rproxy-gw-watchdog.timer rproxy-gw-flush-ipsets.timer \
                rproxy-gw-update.service rproxy-gw-watchdog.service rproxy-gw-flush-ipsets.service \
                rproxy-gw-webui rproxy-gw-mosdns rproxy-gw-iproute \
+               rproxy-gw-load-cn-ips rproxy-gw-load-static-ips \
                wg-quick@wg0 xray nftables; do
         systemctl disable --now "$svc" 2>/dev/null || true
     done
@@ -947,26 +983,27 @@ do_uninstall_silent() {
     nft flush ruleset 2>/dev/null || true
 
     log_step "卸载 Xray"
-    bash -c "$(curl -L --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove --purge 2>/dev/null || true
+    local xray_installer
+    if xray_installer=$(curl -fL --max-time 120 https://github.com/XTLS/Xray-install/raw/main/install-release.sh); then
+        bash -c "$xray_installer" @ remove --purge 2>/dev/null || true
+    else
+        log_warn "Xray 官方脚本下载失败，跳过卸载 Xray（可稍后手动执行官方脚本的 remove --purge），继续删除其他文件"
+    fi
 
     log_step "删除文件"
     rm -rf "${INSTALL_DIR}" "${WWW_DIR}" "${XRAY_CONFIG_DIR}" \
            /etc/wireguard/wg0.conf \
            /etc/systemd/system/rproxy-gw-*.service \
            /etc/systemd/system/rproxy-gw-*.timer \
-           /etc/sysctl.d/99-rproxy-*.conf \
+           /etc/sysctl.d/99-rproxy-*.conf /etc/logrotate.d/rproxy-gw \
            /usr/local/sbin/rproxy-rollback /var/lib/rproxy-gw
 
     systemctl daemon-reload
 
-    # 恢复 resolv.conf
+    # resolv.conf 改回公共 DNS（mosdns 已卸载）
     chattr -i /etc/resolv.conf 2>/dev/null || true
     rm -f /etc/resolv.conf
-    if [[ -f /etc/resolv.conf.bak ]]; then
-        mv /etc/resolv.conf.bak /etc/resolv.conf
-    else
-        echo -e "nameserver 223.5.5.5\nnameserver 119.29.29.29" > /etc/resolv.conf
-    fi
+    echo -e "nameserver 223.5.5.5\nnameserver 119.29.29.29" > /etc/resolv.conf
 
     # 重启 systemd-resolved（如果还想用）
     # systemctl enable --now systemd-resolved 2>/dev/null || true

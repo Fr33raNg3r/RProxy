@@ -31,6 +31,15 @@ LOCK_FILE="/var/run/rproxy-gw-watchdog.lock"
 exec 201>"$LOCK_FILE"
 flock -n 201 || exit 0
 
+# 每日更新 / 升级进行中（持有更新锁）时跳过本轮，不和升级流程抢着重启服务、切换节点；
+# 只试探一下锁就立即释放，不能一直占着，否则每日更新会以为"已有任务在运行"而跳过
+exec 202>/var/run/rproxy-gw-update.lock
+if ! flock -n 202; then
+    exit 0
+fi
+flock -u 202
+exec 202>&-
+
 # 代理探测地址：每次随机挑一个，访问目标不固定、与日常上网流量混在一起
 # （与 webui-backend/services/failback.go 的 probeTargets 保持一致）
 PROBE_URLS=(

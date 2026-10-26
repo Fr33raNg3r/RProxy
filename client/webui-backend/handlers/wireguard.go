@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,9 +67,11 @@ func SetEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
 		return
 	}
-	// 简单清理：去掉前后空格、协议前缀、端口后缀
-	ep := req.Endpoint
-	// 不做严格校验——用户可以填 ddns 域名、IPv4、IPv6 等
+	ep, err := normalizeEndpoint(req.Endpoint)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
+		return
+	}
 	cfg.WGEndpoint = ep
 	if err := config.SaveWebUIConfig(cfg); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg(err.Error()))
@@ -158,6 +162,34 @@ func validatePeerName(name string) error {
 		}
 	}
 	return nil
+}
+
+// normalizeEndpoint 只保留 Endpoint 的主机部分（IPv4 或域名）：去掉协议前缀、路径和端口，
+// 端口由 wg_listen_port 决定（否则填 "1.2.3.4:51820" 会生成 "1.2.3.4:51820:51820"）。空串表示未设置
+func normalizeEndpoint(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		if _, err := strconv.Atoi(s[i+1:]); err != nil {
+			return "", fmt.Errorf("Endpoint 的端口部分不正确：%s", s)
+		}
+		s = s[:i]
+	}
+	if ip := net.ParseIP(s); ip != nil && ip.To4() != nil {
+		return s, nil
+	}
+	if upstreamDomainRe.MatchString(strings.ToLower(s)) {
+		return s, nil
+	}
+	return "", fmt.Errorf("Endpoint 必须是公网 IPv4 地址或域名：%s", s)
 }
 
 // pickEndpoint 客户端配置里的 Endpoint：URL 参数 > 已保存的 wg_endpoint > 公网 IP，都没有返回空串
@@ -311,7 +343,12 @@ func PeerQRCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Endpoint 来源优先级：URL 参数 > 已保存的 wg_endpoint > 自动探测公网 IP
-	endpoint := pickEndpoint(r.URL.Query().Get("endpoint"), cfg.WGEndpoint, services.GetWANIP)
+	q, err := normalizeEndpoint(r.URL.Query().Get("endpoint"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
+		return
+	}
+	endpoint := pickEndpoint(q, cfg.WGEndpoint, services.GetWANIP)
 	if endpoint == "" {
 		writeJSON(w, http.StatusBadRequest, errorMsg(errNoEndpoint))
 		return
@@ -357,7 +394,12 @@ func PeerConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, errorMsg("peer 不存在"))
 		return
 	}
-	endpoint := pickEndpoint(r.URL.Query().Get("endpoint"), cfg.WGEndpoint, services.GetWANIP)
+	q, err := normalizeEndpoint(r.URL.Query().Get("endpoint"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorMsg(err.Error()))
+		return
+	}
+	endpoint := pickEndpoint(q, cfg.WGEndpoint, services.GetWANIP)
 	if endpoint == "" {
 		writeJSON(w, http.StatusBadRequest, errorMsg(errNoEndpoint))
 		return

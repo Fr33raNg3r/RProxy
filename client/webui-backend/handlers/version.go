@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Fr33raNg3r/RProxy/client/webui-backend/services"
 )
 
 // 版本检查状态（内存缓存，启动时拉一次）
@@ -32,7 +34,10 @@ const (
 	releaseTagPrefixLegacy = "client-v"
 	// TriggerUpgrade 每次都先拉一份新鲜的 install.sh 覆盖本地缓存副本，
 	// 避免本地那份自己出问题（如某次升级留下语法错误）后"一键升级"永远卡死。
-	installScriptRawURL = "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/main/client/install.sh"
+	// 按要升级到的 Release tag 取（%s 处为 tag），不取 main：main 上可能有尚未发布的脚本改动，与 Release 产物对不上
+	installScriptRawURLFmt = "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/%s/client/install.sh"
+	// 一键升级所在的 systemd 临时单元名：名字固定，同一时间只能有一个
+	upgradeUnit = "rproxy-gw-upgrade"
 )
 
 // InitVersionCheck WebUI 启动时调用一次
@@ -283,23 +288,40 @@ func fmtSscan(s string, out *int64) (int, error) {
 	return len(s), nil
 }
 
-// upgradeShellScript 由 TriggerUpgrade 在独立的 systemd 临时 unit 里执行
-var upgradeShellScript = `log=` + upgradeLogPath + `
+// upgradeShellScript 由 TriggerUpgrade 在独立的 systemd 临时 unit 里执行，升级到指定 tag（如 v1.8.7）
+func upgradeShellScript(tag string) string {
+	return `log=` + upgradeLogPath + `
 {
-  curl -fsSL --max-time 60 ` + installScriptRawURL + ` -o /opt/rproxy-gw/install.sh.new &&
+  curl -fsSL --max-time 60 ` + fmt.Sprintf(installScriptRawURLFmt, tag) + ` -o /opt/rproxy-gw/install.sh.new &&
     mv /opt/rproxy-gw/install.sh.new /opt/rproxy-gw/install.sh &&
     chmod +x /opt/rproxy-gw/install.sh ||
     { echo "` + upgradeDoneMarker + `结果：下载升级脚本失败，系统未做任何改动）"; exit 1; }
-  bash /opt/rproxy-gw/install.sh upgrade
+  bash /opt/rproxy-gw/install.sh upgrade ` + tag + `
   rc=$?
   [ $rc -eq 0 ] || grep -q "` + upgradeDoneMarker + `" "$log" ||
     echo "` + upgradeDoneMarker + `结果：升级失败，退出码 $rc，详见上方日志）"
 } >> "$log" 2>&1`
+}
 
 // TriggerUpgrade POST /api/upgrade
 // 后台异步执行 install.sh upgrade
 // 立即返回，1-2 分钟后 WebUI 自己会被升级流程重启
 func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
+	// 已有一键升级在跑（如另一个标签页点过）：不截断它的日志、也不再起一个
+	if services.IsServiceActive(upgradeUnit) {
+		writeJSON(w, http.StatusConflict, errorMsg("已有升级任务在运行，请稍候"))
+		return
+	}
+	// 升级到 GitHub 上最新的 Release：现查一次，查不到时用之前缓存的结果
+	refreshLatestCache()
+	versionMu.RLock()
+	latest, checkErr := cachedLatestVer, cachedCheckErr
+	versionMu.RUnlock()
+	if latest == "" {
+		writeJSON(w, http.StatusServiceUnavailable, errorMsg("无法获取最新版本："+checkErr))
+		return
+	}
+
 	// 写一个标记文件，install.sh 升级时能识别"从 WebUI 触发"（可选）
 	_ = os.WriteFile("/tmp/rproxy-upgrade-triggered", []byte(time.Now().Format(time.RFC3339)), 0600)
 
@@ -321,7 +343,7 @@ func TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
 	// 任何失败都要保证日志里出现"升级完成（"标志，否则前端会一直显示"升级中"：
 	// 下载 install.sh 失败时直接写标志；install.sh 失败退出且自己没写过标志（如打快照之前就出错）时补写。
 	go func() {
-		cmd := exec.Command("systemd-run", "--collect", "/bin/bash", "-c", upgradeShellScript)
+		cmd := exec.Command("systemd-run", "--collect", "--unit="+upgradeUnit, "/bin/bash", "-c", upgradeShellScript("v"+latest))
 		_ = cmd.Start()
 	}()
 

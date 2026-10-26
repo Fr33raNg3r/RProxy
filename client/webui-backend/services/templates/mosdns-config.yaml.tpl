@@ -20,6 +20,7 @@ plugins:
 
   # ----------- 国内 DNS 上游 -----------
   # 上游列表来自 /opt/rproxy-gw/config/dns/upstreams.json
+  # 上游写成域名时用 bootstrap 解析它：mosdns 就是本机的 DNS，不指定会解析到自己
   - tag: forward_local
     type: forward
     args:
@@ -28,6 +29,9 @@ plugins:
 {{- range .Local }}
         - addr: "{{ . }}"
           enable_pipeline: true
+{{- if hostIsDomain . }}
+          bootstrap: "223.5.5.5"
+{{- end }}
 {{- end }}
 
   # ----------- 国外 DoH 上游（流量将被 nftables 劫持到 Xray 出境）-----------
@@ -36,8 +40,12 @@ plugins:
     args:
       concurrent: 2
       upstreams:
+      # 上游写成域名时用 8.8.8.8 解析它：8.8.8.8 不是国内 IP，解析请求按默认规则经代理发出，不会拿到被污染的结果
 {{- range .Remote }}
         - addr: "{{ . }}"
+{{- if hostIsDomain . }}
+          bootstrap: "8.8.8.8"
+{{- end }}
 {{- end }}
 
   # ----------- 域名集合：国内 -----------

@@ -50,3 +50,27 @@ func TestPickEndpoint(t *testing.T) {
 		t.Errorf("取不到公网 IP 时返回空，由调用方提示，实际 %q", got)
 	}
 }
+
+// Endpoint 只要主机部分：去掉协议前缀、路径和端口（端口由 wg_listen_port 决定），
+// 否则填 "1.2.3.4:51820" 会生成 "1.2.3.4:51820:51820"
+func TestNormalizeEndpoint(t *testing.T) {
+	ok := map[string]string{
+		"":                          "",
+		"  myhome.ddns.net ":        "myhome.ddns.net",
+		"1.2.3.4:51820":             "1.2.3.4",
+		"https://myhome.ddns.net/x": "myhome.ddns.net",
+		"udp://1.2.3.4:51820":       "1.2.3.4",
+		"MyHome.DDNS.net:1234":      "MyHome.DDNS.net",
+	}
+	for in, want := range ok {
+		got, err := normalizeEndpoint(in)
+		if err != nil || got != want {
+			t.Errorf("normalizeEndpoint(%q) = %q, %v；应为 %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"bad host", "a..b", "1.2.3.4:abc", "myhome\n.net", "300.1.1.1"} {
+		if got, err := normalizeEndpoint(in); err == nil {
+			t.Errorf("normalizeEndpoint(%q) 应报错，实际得到 %q", in, got)
+		}
+	}
+}

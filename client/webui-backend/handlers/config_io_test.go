@@ -105,3 +105,21 @@ func TestRestoreFilesRevertsChanges(t *testing.T) {
 		t.Fatalf("导入前不存在的文件应被删除")
 	}
 }
+
+// 导入的 DNS 上游与 WebUI 保存时同样校验：不合格整体拒绝导入；合格时去掉空行
+func TestValidateImportBundleChecksDNSUpstreams(t *testing.T) {
+	b := validBundle()
+	b.DNS = &config.DNSUpstreams{Local: []string{"udp://223.5.5.5"}, Remote: []string{`https://1.1.1.1/dns-query"`}}
+	if err := validateImportBundle(&b); err == nil {
+		t.Fatal("含引号的上游应被拒绝")
+	}
+
+	b = validBundle()
+	b.DNS = &config.DNSUpstreams{Local: []string{"", "udp://223.5.5.5", " "}, Remote: []string{"https://dns.google/dns-query"}}
+	if err := validateImportBundle(&b); err != nil {
+		t.Fatalf("合法上游不应被拒绝: %v", err)
+	}
+	if len(b.DNS.Local) != 1 || b.DNS.Local[0] != "udp://223.5.5.5" {
+		t.Fatalf("应去掉空行，实际 %q", b.DNS.Local)
+	}
+}

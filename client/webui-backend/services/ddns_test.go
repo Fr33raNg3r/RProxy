@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -55,6 +57,32 @@ func TestFetchWANIPAllFail(t *testing.T) {
 	defer bad.Close()
 	if ip, err := fetchWANIP([]string{bad.URL}); err == nil {
 		t.Fatalf("期望失败，却得到 %q", ip)
+	}
+}
+
+// 查询公网 IP 的请求万一走了代理，拿到的是节点 VPS 的 IP：不能当成家宽 IP 写进 DDNS。
+// 节点 IP 取自生成 Xray 配置时记下的解析结果（resolve-cache.json）；换下一个接口再试，都这样就报错
+func TestFetchWANIPRejectsNodeIP(t *testing.T) {
+	old := resolveCachePath
+	t.Cleanup(func() { resolveCachePath = old })
+	resolveCachePath = filepath.Join(t.TempDir(), "resolve-cache.json")
+	if err := os.WriteFile(resolveCachePath, []byte(`{"vps.example.com":"203.0.113.9"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	viaProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("203.0.113.9"))
+	}))
+	defer viaProxy.Close()
+	direct := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("1.2.3.4"))
+	}))
+	defer direct.Close()
+
+	if ip, err := fetchWANIP([]string{viaProxy.URL, direct.URL}); err != nil || ip != "1.2.3.4" {
+		t.Fatalf("应跳过节点 IP 取到 1.2.3.4，实际 (%q, %v)", ip, err)
+	}
+	if ip, err := fetchWANIP([]string{viaProxy.URL}); err == nil || !strings.Contains(err.Error(), "节点") {
+		t.Fatalf("只取到节点 IP 时应报错并说明原因，实际 (%q, %v)", ip, err)
 	}
 }
 

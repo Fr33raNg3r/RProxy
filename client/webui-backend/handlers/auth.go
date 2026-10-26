@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -114,15 +116,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		lifetime = middleware.RememberSessionLifetime
 	}
 	exp := time.Now().Add(lifetime)
-	token := middleware.MakeSessionToken(cfg.SessionSecret, exp)
-	http.SetCookie(w, &http.Cookie{
-		Name:     middleware.CookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Expires:  exp,
-		SameSite: http.SameSiteLaxMode,
-	})
+	setSessionCookie(w, middleware.MakeSessionToken(cfg.SessionSecret, exp), exp)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok":                   true,
 		"must_change_password": !cfg.PasswordChanged,
@@ -173,9 +167,45 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.PasswordHash = string(hash)
 	cfg.PasswordChanged = true
+	oldToken := ""
+	if c, err := r.Cookie(middleware.CookieName); err == nil {
+		oldToken = c.Value
+	}
+	token, exp, err := rotateSession(cfg, oldToken)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorMsg("生成会话密钥失败"))
+		return
+	}
 	if err := config.SaveWebUIConfig(cfg); err != nil {
 		writeJSON(w, http.StatusInternalServerError, errorMsg("保存失败"))
 		return
 	}
+	setSessionCookie(w, token, exp)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// rotateSession 换一个新的会话密钥，让改密前签发的所有 cookie 失效；
+// 返回给当前浏览器的新 cookie 沿用原到期时间（取不到时按普通会话时长）
+func rotateSession(cfg *config.WebUIConfig, oldToken string) (string, time.Time, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", time.Time{}, err
+	}
+	cfg.SessionSecret = hex.EncodeToString(b)
+	exp, ok := middleware.TokenExpiry(oldToken)
+	if !ok || !exp.After(time.Now()) {
+		exp = time.Now().Add(middleware.SessionLifetime)
+	}
+	return middleware.MakeSessionToken(cfg.SessionSecret, exp), exp, nil
+}
+
+func setSessionCookie(w http.ResponseWriter, token string, exp time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.CookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		Expires:  exp,
+		SameSite: http.SameSiteLaxMode,
+	})
 }

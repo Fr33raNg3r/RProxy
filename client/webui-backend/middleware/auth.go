@@ -33,6 +33,15 @@ func MakeSessionToken(secret string, expiry time.Time) string {
 	return exp + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
+// TokenExpiry 取出 cookie 里记录的到期时间（不校验签名）
+func TokenExpiry(token string) (time.Time, bool) {
+	exp, err := strconv.ParseInt(strings.SplitN(token, ".", 2)[0], 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(exp, 0), true
+}
+
 // VerifySessionToken 校验 cookie，返回是否有效
 func VerifySessionToken(secret, token string) bool {
 	parts := strings.SplitN(token, ".", 2)

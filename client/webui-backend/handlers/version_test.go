@@ -93,7 +93,7 @@ func TestUpgradeShellScriptAlwaysWritesMarker(t *testing.T) {
 			os.MkdirAll(dir+"/opt/logs", 0755)
 			src := dir + "/fake_install.sh"
 			os.WriteFile(src, []byte("#!/bin/bash\n"+c.fakeInstall+"\n"), 0755)
-			s := strings.ReplaceAll(upgradeShellScript, "/opt/rproxy-gw", dir+"/opt")
+			s := strings.ReplaceAll(upgradeShellScript("v1.8.7"), "/opt/rproxy-gw", dir+"/opt")
 			fetch := "false"
 			if c.downloadOK {
 				fetch = "cp " + src + " " + dir + "/opt/install.sh.new"
@@ -105,5 +105,28 @@ func TestUpgradeShellScriptAlwaysWritesMarker(t *testing.T) {
 				t.Fatalf("完成标志 %d 处（应为 %d），日志：\n%s", n, c.wantMarkers, b)
 			}
 		})
+	}
+}
+
+// 一键升级按最新 Release 的 tag 取 install.sh 并把 tag 传给它：
+// 不取 main 分支的脚本，避免用 main 上尚未发布的脚本去装旧版本的产物
+func TestUpgradeShellScriptUsesReleaseTag(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("没有 bash")
+	}
+	s := upgradeShellScript("v1.8.7")
+	if !strings.Contains(s, "https://raw.githubusercontent.com/Fr33raNg3r/RProxy/v1.8.7/client/install.sh") {
+		t.Fatalf("应按 tag 下载 install.sh，脚本：\n%s", s)
+	}
+	dir := filepath.ToSlash(t.TempDir())
+	os.MkdirAll(dir+"/opt/logs", 0755)
+	src := dir + "/fake_install.sh"
+	os.WriteFile(src, []byte("#!/bin/bash\necho \"参数：$*\"\n"), 0755)
+	s = strings.ReplaceAll(s, "/opt/rproxy-gw", dir+"/opt")
+	s = regexp.MustCompile(`curl -fsSL --max-time 60 \S+ -o \S+`).ReplaceAllString(s, "cp "+src+" "+dir+"/opt/install.sh.new")
+	_ = exec.Command("bash", "-c", s).Run()
+	b, _ := os.ReadFile(dir + "/opt/logs/upgrade.log")
+	if !strings.Contains(string(b), "参数：upgrade v1.8.7") {
+		t.Fatalf("install.sh 应收到 upgrade v1.8.7，日志：\n%s", b)
 	}
 }

@@ -407,6 +407,8 @@ function startSpeedSSE() {
     if (sse) {
       sse.close()
       sse = null
+      // EventSource 拿不到 HTTP 状态码：登录已失效时请求一次接口，由 api 层跳回登录页，否则会一直重连
+      api.getStatus().catch(() => {})
       setTimeout(startSpeedSSE, 5000)
     }
   }
